@@ -357,6 +357,11 @@ type BuilderImpl struct {
 	// client that started it. Flag-backed like the rest; off unless asked for.
 	mcp bool
 
+	// silent is whether the run prints only its address on stdout, once, and
+	// none of its own lines on stderr. Flag-backed like the rest; off unless
+	// asked for.
+	silent bool
+
 	// preflight is whether the command checks the network paths a tunnel
 	// depends on and exits instead of running. Flag-backed like the rest.
 	preflight bool

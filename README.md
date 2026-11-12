@@ -220,6 +220,7 @@ flag has a `TUNNELD_*` environment variable, and the flag wins.
 | `--multiview=false` | `TUNNELD_MULTIVIEW` | No panel; each origin keeps only its own `?n` address. |
 | `--identity-providers=` | `TUNNELD_IDENTITY_PROVIDERS` | Mint anonymously. |
 | `--qr` | `TUNNELD_QR` | Print your address as a QR code too, and open no tab. Scan it with your phone. |
+| `-s` | `TUNNELD_SILENT` | Print only your address, once the tunnel is up, for a script: `read -r url < <(tunneld -s :3000)`. |
 | `--log-level debug` | `TUNNELD_LOG` | Log to stderr. Silent by default. |
 | `--provider <host>` | `TUNNELD_PROVIDER` | Mint against another provider. Default `tunnel.pizza`. |
 | *(the arguments)* | `TUNNELD_ORIGINS` | Origins, comma-separated. |

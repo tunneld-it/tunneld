@@ -253,6 +253,12 @@ const (
 	// carries the addresses and nothing else.
 	QREnv = "TUNNELD_QR"
 
+	// SilentEnv names whether a run prints only its address on stdout, once
+	// the tunnel is up, and none of its own lines on stderr: the mirror of
+	// -s and --silent, which beat it. Any value strconv.ParseBool accepts
+	// works. Errors and the log still reach stderr.
+	SilentEnv = "TUNNELD_SILENT"
+
 	// MCPEnv names whether a run serves MCP on its stdin and stdout — the
 	// mirror of --mcp, which beats it. Any value strconv.ParseBool accepts
 	// works. On, stdout carries JSON-RPC and nothing else, so what a run
