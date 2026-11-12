@@ -607,7 +607,9 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 	// so nothing is missed.
 	panel := b.multiview && origins.Len() > 1 && display.IsInteractive(cmd)
 	var requested []string
-	if !b.mcp && !panel && b.console.For(attached, cmd) == nil {
+	// A silent run draws no frame and no panel for anyone to watch, so its
+	// origins' lines come here whatever the streams are.
+	if !b.mcp && (b.silent || (!panel && b.console.For(attached, cmd) == nil)) {
 		served, dialed := composePrefixes(origins, console.IsTerminal(stderr))
 		attached.Mirror(stderr, served)
 		requested = dialed

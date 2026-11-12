@@ -3278,6 +3278,47 @@ func TestSilent(t *testing.T) {
 		})
 	}
 
+	t.Run("the address comes once the spec is saved", func(t *testing.T) {
+		h := newRunHarness(t, live(public), ":3000")
+		ctx, cancel := context.WithCancel(t.Context())
+		atSave := "unsaved"
+		h.cache.onSave = func() { atSave = h.stdout.String(); cancel() }
+		if err := h.run(t, ctx, "-s"); err != nil {
+			t.Fatalf("run() = %v", err)
+		}
+		if atSave != "" {
+			t.Errorf("stdout at the save = %q, want nothing yet", atSave)
+		}
+		if got, want := h.stdout.String(), public+"\n"; got != want {
+			t.Errorf("stdout = %q, want %q", got, want)
+		}
+		if len(h.attacher.origins) != 1 {
+			t.Errorf("programs started %d times, want once before the address", len(h.attacher.origins))
+		}
+	})
+
+	t.Run("a program's output still reaches stderr where a frame would be drawn", func(t *testing.T) {
+		ptmx, tty, err := pty.Open()
+		if err != nil {
+			t.Skipf("no pty to draw on: %v", err)
+		}
+		t.Cleanup(func() { tty.Close(); ptmx.Close() })
+		h := newRunHarness(t, live(public), "attach://dockerd/my-container")
+		h.attacher.mirrors = true
+		h.console = tty
+		ctx, cancel := context.WithCancel(t.Context())
+		h.cache.onSave = cancel
+		if err := h.run(t, ctx, "-s"); err != nil {
+			t.Fatalf("run() = %v", err)
+		}
+		if h.attacher.showed.Load() {
+			t.Error("the console drew a frame, want none")
+		}
+		if h.attacher.mirrored == nil {
+			t.Error("the program's output was not mirrored to stderr")
+		}
+	})
+
 	t.Run("a run that cannot start fails with nothing on stdout", func(t *testing.T) {
 		h := newRunHarness(t, dead(errors.New("no edge")), ":3000")
 		if err := h.run(t, t.Context(), "-s"); err == nil {

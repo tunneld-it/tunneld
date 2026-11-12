@@ -384,7 +384,7 @@ func (r *RunImpl) up(ctx context.Context, tun libtunnel.TunnelV1) (string, error
 	//
 	// Not while a frame an earlier tunnel drew is up: the console is the
 	// frame's, and a spinner there animates over it.
-	if (display.IsInteractive(cmd) || r.piped) && r.spinner && r.screen == nil {
+	if (display.IsInteractive(cmd) || r.piped) && r.spinner && !r.silent && r.screen == nil {
 		console.Loading(stderr, tun.Ready(), "Creating tunnel...")
 	}
 
@@ -463,12 +463,7 @@ func (r *RunImpl) up(ctx context.Context, tun libtunnel.TunnelV1) (string, error
 		fmt.Fprintln(w, line)
 	}
 	addr := cmp.Or(view, publicURL(public, 0, origins.Len()))
-	if r.silent {
-		if !r.said {
-			say(true, addr)
-			r.said = true
-		}
-	} else if r.screen == nil {
+	if !r.silent && r.screen == nil {
 		if view != "" {
 			say(true, view)
 			for _, origin := range origins.All() {
@@ -606,6 +601,13 @@ func (r *RunImpl) up(ctx context.Context, tun libtunnel.TunnelV1) (string, error
 	// Its stdout and stderr go to the run's log file, so what bypasses the
 	// logger — a panic's trace — is still somewhere; the logger itself stops
 	// showing lines there, since the file already keeps them.
+	// A silent run's one line goes where the stop hint would: once the spec
+	// is saved and the programs started, and before a detach takes stdout.
+	if r.silent && !r.said {
+		say(true, addr)
+		r.said = true
+	}
+
 	detached := r.pid != nil && r.pid.Detach(r.logs.File(), log)
 	if detached {
 		r.logs.Detach()
