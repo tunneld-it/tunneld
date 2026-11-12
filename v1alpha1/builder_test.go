@@ -901,6 +901,8 @@ type runHarness struct {
 	order    []string
 	stdout   bytes.Buffer
 	stderr   bytes.Buffer
+	// silent is what run sets v1.SilentEnv to; empty unsets it.
+	silent string
 	// console, when set, is what the command is given for stdin and stdout
 	// instead of the buffers: a real terminal, which is what mirrorable asks
 	// about and what a bytes.Buffer can never be.
@@ -1019,6 +1021,7 @@ func (h *runHarness) run(t *testing.T, ctx context.Context, args ...string) erro
 	for _, name := range []string{v1.OriginsEnv, v1.ProviderEnv, v1.LogEnv, v1.MultiviewEnv, v1.QREnv, v1.MCPEnv} {
 		t.Setenv(name, "")
 	}
+	t.Setenv(v1.SilentEnv, h.silent)
 	cmd := h.b.Command()
 	// Stdin is set either way: unset, cobra falls back to the process's own,
 	// which is a terminal when the suite is run from one — and whether a
@@ -3215,6 +3218,75 @@ func TestOpenFalseShowsNothing(t *testing.T) {
 	if got := strings.Count(h.stderr.String(), stopHint); got != 1 {
 		t.Errorf("stop hint appears %d times on stderr, want 1:\n%s", got, h.stderr.String())
 	}
+}
+
+// TestSilent covers -s: stdout is the one address Open would be handed,
+// written once the tunnel is up and never again, and stderr carries none of
+// the run's chrome (the banner, the map, the stop hint). A run that cannot
+// start still fails, with nothing on stdout, so $(tunneld -s ...) is never
+// left holding a partial answer.
+func TestSilent(t *testing.T) {
+	const public = "https://foo.tunneld.domain/"
+	const second = "https://bar.tunneld.domain/"
+
+	for _, tc := range []struct {
+		name    string
+		env     string
+		args    []string
+		origins []string
+		want    string
+	}{
+		{name: "the flag", args: []string{"-s"}, origins: []string{":3000"}, want: public + "\n"},
+		{name: "the long flag", args: []string{"--silent"}, origins: []string{":3000"}, want: public + "\n"},
+		{name: "the variable", env: "1", origins: []string{":3000"}, want: public + "\n"},
+		{name: "the panel's address for several origins", args: []string{"-s"}, origins: []string{":3000", ":4000"}, want: public + "\n"},
+		{name: "the default origin's address without the panel", args: []string{"-s", "--multiview=false"}, origins: []string{":3000", ":4000"}, want: public + "?0\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first, next := live(public), live(second)
+			h := newRunHarness(t, first, tc.origins...)
+			v1.Apply(h.b, WithOpen(true))
+			h.tunnels = append(h.tunnels, next)
+			next.order = &h.order
+			h.cache.specs = make(chan string, 1)
+			ctx, cancel := context.WithCancel(t.Context())
+			saves := 0
+			h.cache.onSave = func() {
+				saves++
+				if saves == 1 {
+					go func() { h.cache.specs <- "patched" }()
+					return
+				}
+				cancel()
+			}
+			h.silent = tc.env
+			if err := h.run(t, ctx, tc.args...); err != nil {
+				t.Fatalf("run() = %v, want nil after a signal", err)
+			}
+			if got := h.stdout.String(); got != tc.want {
+				t.Errorf("stdout = %q, want %q once, the second tunnel's included", got, tc.want)
+			}
+			stderr := h.stderr.String()
+			for _, chrome := range []string{"tunneld " + Version(), "  -> ", stopHint} {
+				if strings.Contains(stderr, chrome) {
+					t.Errorf("stderr carries %q, want none of the run's chrome:\n%s", chrome, stderr)
+				}
+			}
+			if len(h.display.opened) != 0 {
+				t.Errorf("opened %q, want nothing opened", h.display.opened)
+			}
+		})
+	}
+
+	t.Run("a run that cannot start fails with nothing on stdout", func(t *testing.T) {
+		h := newRunHarness(t, dead(errors.New("no edge")), ":3000")
+		if err := h.run(t, t.Context(), "-s"); err == nil {
+			t.Fatal("run() = nil, want the tunnel's failure")
+		}
+		if got := h.stdout.String(); got != "" {
+			t.Errorf("stdout = %q, want nothing", got)
+		}
+	})
 }
 
 // TestStopHintTellsAWaitingConsoleWhatToPress covers the line a run prints

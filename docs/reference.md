@@ -914,6 +914,23 @@ https://0t8qsb6pq3.tunneld.domain/?1
   -> http://localhost:4000
 ```
 
+**`-s` (`--silent`, `TUNNELD_SILENT`) is the contract for a script that wants
+one line.** stdout carries exactly one: the address a browser would open (the
+panel's when there is one, otherwise the default origin's), written once the
+tunnel is up, the moment the stop hint would otherwise be printed, and nothing
+after it for the life of the run, even when a new spec brings up a new tunnel.
+stderr loses the banner, the origin lines, the spinner and the stop hint, and
+no frame is drawn and no tab opened. Errors, the logs at `--log-level`, a
+program's own output and `--qr`'s code still go to stderr, and a run that cannot
+start still exits non-zero with nothing on stdout, so the line appearing is the
+tunnel being ready. Read it without waiting for the run to end, which it does
+not: `$(tunneld -s :3000 | head -1)` would wait for tunneld to exit, since
+nothing more is written for a closed pipe to stop it.
+
+```sh
+read -r url < <(tunneld -s :3000)   # bash or zsh: returns at the line, the tunnel stays up
+```
+
 An address reaches exactly one of the two streams. stdout did carry bare URLs
 once while stderr carried a full map, and every address then printed twice
 wherever both streams landed together; the de-duplication meant to hide that
@@ -999,6 +1016,7 @@ default.**
 | `--multiview` | `TUNNELD_MULTIVIEW` | Answer the tunnel's own address with a panel framing every origin. **Default on**, and inert with a single origin, which keeps the bare address for itself. |
 | `--qr` | `TUNNELD_QR` | Print the address as a QR code on stderr once the tunnel is up, beneath the origins it reaches, and open no browser tab (an embedding program's `WithOpen(true)` still opens one): the one address a browser would open, the panel when there is one, so one code however many origins. Plain half-block text with no escapes, light modules drawn, so it reads right on a dark terminal; on a light one it is inverted, which many cameras still read. Error correction is level M, which recovers about 15% of a code where the frame's level L recovers 7%, for a code that is text and may be copied on its way to a phone; for the addresses tunnel.pizza mints the two are the same size. Not printed when the console is about to draw a frame, where `Ctrl+K` then `r` is the code. **Default off.** |
 | `--mcp` | `TUNNELD_MCP` | Serve MCP on stdin and stdout, for the MCP client that started the run: a plugin's stdio server. stdout then carries JSON-RPC and nothing else, so the addresses a run would print there go to stderr, and a pipe on stdin is the client's rather than a `kubectl debug -i` session's, so no line on it stops the run. The tunnel's MCP server at `/_tunneld/mcp` is there either way. **Default off.** |
+| `-s`, `--silent` | `TUNNELD_SILENT` | Print only the address on stdout, once the tunnel is up, and none of tunneld's own lines on stderr: no banner, origin lines, spinner or stop hint, and no frame or tab. Errors, logs, a program's output and `--qr` still reach stderr. See [Output contract](#output-contract). **Default off.** |
 | `--preflight` | `TUNNELD_PREFLIGHT` | Check every network path a tunnel depends on, say which route a run would take, and exit; mints nothing and opens no tunnel. See [Preflight](#preflight). **Default off.** |
 | `--identity-providers` | `TUNNELD_IDENTITY_PROVIDERS` | Identity providers to find a mint credential with, all asked at once, the first in the list to find one winning. **Default `github,anthropic`**: `gh auth token` and then the GitHub environment variables, then a Claude Code workspace's OAuth token. Empty sends no credential. A name with no provider behind it is an error before the tunnel is minted, so a typo does not quietly send nothing. `LIBTUNNEL_TOKEN` outranks all of it. |
 
@@ -1464,6 +1482,7 @@ after construction still lands.
 | `TUNNELD_IDENTITY_PROVIDERS` | `--identity-providers` | Identity providers to find a mint credential with, comma-separated and in order. Empty sends no credential. |
 | `TUNNELD_QR` | `--qr` | Whether to print the address as a QR code on stderr. Any value `strconv.ParseBool` accepts. |
 | `TUNNELD_MCP` | `--mcp` | Whether to serve MCP on stdin and stdout. Any value `strconv.ParseBool` accepts. |
+| `TUNNELD_SILENT` | `-s`, `--silent` | Whether to print only the address on stdout, and none of tunneld's own lines on stderr. Any value `strconv.ParseBool` accepts. |
 | `TUNNELD_PREFLIGHT` | `--preflight` | Whether to check the network and exit instead of running. Any value `strconv.ParseBool` accepts. |
 | `HTTP_ORIGIN` | *(no flag)* | Written, never read: set for the programs a run starts to the tunnel's origin, `https://<hostname>`; see [Programs](#programs). |
 | `TUNNELD_OWNER` | *(no flag)* | Written, never read: the tunnel's owner as its latest mint named it; see [The owner](#the-owner). Absent when the mint named nobody. |

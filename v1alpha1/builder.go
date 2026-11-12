@@ -110,6 +110,15 @@ func WithQR(show bool) Option {
 	return func(b *BuilderImpl) { b.qr = show }
 }
 
+// WithSilent seeds whether a run prints only its address on stdout, once the
+// tunnel is up, and none of its own lines on stderr: no banner, no map of
+// origins, no spinner, no stop hint, and no frame or tab. Errors and the log
+// still reach stderr. -s, --silent and v1.SilentEnv all beat it. Unset, a run
+// prints everything.
+func WithSilent(silent bool) Option {
+	return func(b *BuilderImpl) { b.silent = silent }
+}
+
 // WithMCP seeds whether a run serves MCP on its stdin and stdout, for an MCP
 // client that starts it as a stdio server. --mcp and v1.MCPEnv both beat it.
 // Unset, it serves none there.
@@ -186,6 +195,7 @@ var flagEnv = map[string]string{
 	"qr":        v1.QREnv,
 	"mcp":       v1.MCPEnv,
 	"preflight": v1.PreflightEnv,
+	"silent":    v1.SilentEnv,
 }
 
 // Command assembles the configured command. It is the terminal step; the
@@ -339,6 +349,8 @@ to stderr. More: https://github.com/tunnel-pizza/tunneld#readme`
 			"serve MCP on stdin and stdout, for the MCP client that started this run [$"+v1.MCPEnv+"]")
 		cmd.Flags().BoolVar(&b.preflight, "preflight", b.preflight,
 			"check every network path a tunnel needs and exit, minting nothing [$"+v1.PreflightEnv+"]")
+		cmd.Flags().BoolVarP(&b.silent, "silent", "s", b.silent,
+			"print only the address on stdout, once the tunnel is up, and nothing else of tunneld's own [$"+v1.SilentEnv+"]")
 
 		// Docker's rule: options before the image. Flag parsing stops at the
 		// first origin, and every word after it is positional — so the words
@@ -531,7 +543,9 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 	// — no version, no sign the program had run. Everything above this line
 	// is configuration, so a bad flag or an origin that cannot be reached
 	// still fails without one.
-	fmt.Fprintln(stderr, VersionLine(b.cached(func() Origins { return origins })))
+	if !b.silent {
+		fmt.Fprintln(stderr, VersionLine(b.cached(func() Origins { return origins })))
+	}
 
 	// The provider travels by environment. From builds its own backend, so
 	// there is no handle to set it on, and it is the same knob either way:
@@ -698,7 +712,8 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		run.WithOpen(b.open),
 		// A log line lands on top of a spinner, so a run with its logger on
 		// gets the lines instead.
-		run.WithSpinner(b.logLevel == ""),
+		run.WithSpinner(b.logLevel == "" && !b.silent),
+		run.WithSilent(b.silent),
 		run.WithPiped(piped),
 		run.WithHint(hint),
 		run.WithAuth(b.auth),
@@ -876,6 +891,7 @@ func (b *BuilderImpl) tracking(origins Origins) map[string]string {
 		v1.IdentityProvidersEnv: strings.Join(b.identityProviders, ","),
 		v1.QREnv:                strconv.FormatBool(b.qr),
 		v1.MCPEnv:               strconv.FormatBool(b.mcp),
+		v1.SilentEnv:            strconv.FormatBool(b.silent),
 	}
 	// Facts about the run rather than knobs, so they carry no v1 constant and
 	// nothing reads them back: which build wrote the file, and where it was

@@ -97,6 +97,11 @@ type RunImpl struct {
 	piped   bool
 	hint    string
 
+	// silent prints only the address on stdout, once for the whole call, and
+	// none of the run's own lines on stderr; said is whether it has.
+	silent bool
+	said   bool
+
 	// screen is the console a frame was drawn on for an earlier tunnel of
 	// this call, nil when none was: that frame is still up, showing the same
 	// origins, so a later tunnel keeps it rather than drawing another.
@@ -197,6 +202,11 @@ const streamSettle = 100 * time.Millisecond
 // WithPiped says somebody is watching though none of the command's streams
 // is a terminal: a client relaying them onto one, as kubectl debug -i does.
 func WithPiped(on bool) Option { return func(r *RunImpl) { r.piped = on } }
+
+// WithSilent prints only the address on stdout, once for the whole call: the
+// one Open would be handed, when the first tunnel is up. No map, no hint, and
+// no frame or tab.
+func WithSilent(on bool) Option { return func(r *RunImpl) { r.silent = on } }
 
 // WithHint sets what a console with nothing left to draw is told.
 func WithHint(hint string) Option { return func(r *RunImpl) { r.hint = hint } }
@@ -452,7 +462,13 @@ func (r *RunImpl) up(ctx context.Context, tun libtunnel.TunnelV1) (string, error
 		}
 		fmt.Fprintln(w, line)
 	}
-	if r.screen == nil {
+	addr := cmp.Or(view, publicURL(public, 0, origins.Len()))
+	if r.silent {
+		if !r.said {
+			say(true, addr)
+			r.said = true
+		}
+	} else if r.screen == nil {
 		if view != "" {
 			say(true, view)
 			for _, origin := range origins.All() {
@@ -510,11 +526,10 @@ func (r *RunImpl) up(ctx context.Context, tun libtunnel.TunnelV1) (string, error
 	if !showing {
 		screen = r.console.For(attached, cmd)
 	}
-	if os.Getenv(openEnv) == "false" {
+	if os.Getenv(openEnv) == "false" || r.silent {
 		shown := false
 		screen, open = nil, &shown
 	}
-	addr := cmp.Or(view, publicURL(public, 0, origins.Len()))
 
 	// The address as a code for a phone, when asked for: the one address Open
 	// is handed below, so one code however many origins there are. On stderr
@@ -595,7 +610,7 @@ func (r *RunImpl) up(ctx context.Context, tun libtunnel.TunnelV1) (string, error
 	if detached {
 		r.logs.Detach()
 	}
-	if screen == nil && !detached {
+	if screen == nil && !detached && !r.silent {
 		// Nothing is going to be drawn here. The addresses are up, the run
 		// blocks from now on, and the signal is the only thing left on this
 		// side of it.
