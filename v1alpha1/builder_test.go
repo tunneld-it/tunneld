@@ -705,6 +705,8 @@ type fakeAttacher struct {
 	// mirrored is the prefixes Mirror was handed, nil when compose output
 	// was not turned on.
 	mirrored []string
+	// onStart fires at each Start, after HTTP_ORIGIN is recorded.
+	onStart func()
 	// onAnnounce fires when it arrives, which is after the URL is live and
 	// before the cache is written — the one signal a case can end a run on
 	// whether or not this run caches anything.
@@ -755,7 +757,12 @@ func (f *fakeAttacher) Mirror(_ io.Writer, prefixes []string) { f.mirrored = pre
 func (f *fakeAttacher) Exited() <-chan []int { return f.exited }
 
 // Start is what a run starts its programs through.
-func (f *fakeAttacher) Start() { f.origins = append(f.origins, os.Getenv(v1.HTTPOriginEnv)) }
+func (f *fakeAttacher) Start() {
+	f.origins = append(f.origins, os.Getenv(v1.HTTPOriginEnv))
+	if f.onStart != nil {
+		f.onStart()
+	}
+}
 
 func (f *fakeAttacher) Done() <-chan struct{} { return f.asked }
 
@@ -3277,6 +3284,48 @@ func TestSilent(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("the address comes once the spec is saved and the programs started", func(t *testing.T) {
+		h := newRunHarness(t, live(public), ":3000")
+		ctx, cancel := context.WithCancel(t.Context())
+		atSave, atStart := "unsaved", "unstarted"
+		h.cache.onSave = func() { atSave = h.stdout.String(); cancel() }
+		h.attacher.onStart = func() { atStart = h.stdout.String() }
+		if err := h.run(t, ctx, "-s"); err != nil {
+			t.Fatalf("run() = %v", err)
+		}
+		if atSave != "" {
+			t.Errorf("stdout at the save = %q, want nothing yet", atSave)
+		}
+		if atStart != "" {
+			t.Errorf("stdout when the programs started = %q, want nothing yet", atStart)
+		}
+		if got, want := h.stdout.String(), public+"\n"; got != want {
+			t.Errorf("stdout = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a program's output still reaches stderr where a frame would be drawn", func(t *testing.T) {
+		ptmx, tty, err := pty.Open()
+		if err != nil {
+			t.Skipf("no pty to draw on: %v", err)
+		}
+		t.Cleanup(func() { tty.Close(); ptmx.Close() })
+		h := newRunHarness(t, live(public), "attach://dockerd/my-container")
+		h.attacher.mirrors = true
+		h.console = tty
+		ctx, cancel := context.WithCancel(t.Context())
+		h.cache.onSave = cancel
+		if err := h.run(t, ctx, "-s"); err != nil {
+			t.Fatalf("run() = %v", err)
+		}
+		if h.attacher.showed.Load() {
+			t.Error("the console drew a frame, want none")
+		}
+		if h.attacher.mirrored == nil {
+			t.Error("the program's output was not mirrored to stderr")
+		}
+	})
 
 	t.Run("a run that cannot start fails with nothing on stdout", func(t *testing.T) {
 		h := newRunHarness(t, dead(errors.New("no edge")), ":3000")
