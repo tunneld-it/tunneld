@@ -14,7 +14,7 @@ minor" of the current major.
 ## Reporting a Vulnerability
 
 Please report security vulnerabilities **privately** via GitHub's
-[private vulnerability reporting](https://github.com/tunnel-pizza/tunneld/security/advisories/new)
+[private vulnerability reporting](https://github.com/tunneld-it/tunneld/security/advisories/new)
 on the Security tab. That opens a draft advisory only the maintainers can see.
 
 Please do **not** open a public issue for a suspected vulnerability.
@@ -54,7 +54,7 @@ To verify a binary (cosign v2+):
 
 ```sh
 TAG=v0.1.0
-REPO=tunnel-pizza/tunneld
+REPO=tunneld-it/tunneld
 BIN=tunneld-linux-x64
 
 for f in "$BIN" "$BIN.sigstore"; do
@@ -63,7 +63,7 @@ done
 
 cosign verify-blob \
   --bundle "${BIN}.sigstore" \
-  --certificate-identity-regexp '^https://github.com/tunnel-pizza/tunneld/' \
+  --certificate-identity-regexp '^https://github.com/tunneld-it/tunneld/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "$BIN"
 ```
@@ -72,7 +72,7 @@ A source archive verifies the same way, against the archive GitHub serves:
 
 ```sh
 TAG=v0.1.0
-REPO=tunnel-pizza/tunneld
+REPO=tunneld-it/tunneld
 
 curl -fsSL "https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz" \
   -o "${TAG}.tar.gz"
@@ -81,7 +81,7 @@ curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TAG}.tar.gz.si
 
 cosign verify-blob \
   --bundle "${TAG}.tar.gz.sigstore" \
-  --certificate-identity-regexp '^https://github.com/tunnel-pizza/tunneld/' \
+  --certificate-identity-regexp '^https://github.com/tunneld-it/tunneld/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "${TAG}.tar.gz"
 ```

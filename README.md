@@ -4,9 +4,9 @@
 coding agent, a container: one command, no account.
 
 [![npm](https://img.shields.io/npm/v/tunneld)](https://www.npmjs.com/package/tunneld)
-[![CI](https://github.com/tunnel-pizza/tunneld/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tunnel-pizza/tunneld/actions/workflows/ci.yml)
+[![CI](https://github.com/tunneld-it/tunneld/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tunneld-it/tunneld/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/tunnel-pizza/tunneld.svg)](https://pkg.go.dev/github.com/tunnel-pizza/tunneld)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/tunnel-pizza/tunneld/badge)](https://scorecard.dev/viewer/?uri=github.com/tunnel-pizza/tunneld)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/tunneld-it/tunneld/badge)](https://scorecard.dev/viewer/?uri=github.com/tunneld-it/tunneld)
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](./LICENSE.md)
 
 ```sh
@@ -46,10 +46,10 @@ its own to share your shell.
 - **npm, for good:** `npm install -g tunneld`, then drop the `npx` from
   everything below.
 - **Go:** `go install github.com/tunnel-pizza/tunneld@latest`
-- **A binary:** every [release](https://github.com/tunnel-pizza/tunneld/releases)
+- **A binary:** every [release](https://github.com/tunneld-it/tunneld/releases)
   carries a signed one per platform, and [SECURITY.md](./SECURITY.md) has the
   recipe to verify it.
-- **A container:** `ghcr.io/tunnel-pizza/tunneld`, or `tunneld/tunneld` on
+- **A container:** `ghcr.io/tunneld-it/tunneld`, or `tunneld/tunneld` on
   Docker Hub (`tunneld/debug` for `kubectl debug`). See
   [Running in a container](./docs/reference.md#running-in-a-container).
 
@@ -356,7 +356,7 @@ And the rest of what tunneld requires directly:
 
 And Go itself. The license notices for the Go standard library and for every
 module a release binary links are in `THIRD_PARTY_LICENSES`, attached to each
-[release](https://github.com/tunnel-pizza/tunneld/releases) and shipped in the
+[release](https://github.com/tunneld-it/tunneld/releases) and shipped in the
 npm package.
 
 ## Contributing

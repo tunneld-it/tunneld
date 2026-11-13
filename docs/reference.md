@@ -690,7 +690,7 @@ each. Those become the run's first origins, `http://localhost:<port>` or
 `https://localhost:<port>`, and the shell comes after them. So
 
 ```sh
-kubectl debug <pod> -it --image ghcr.io/tunnel-pizza/tunneld
+kubectl debug <pod> -it --image ghcr.io/tunneld-it/tunneld
 ```
 
 beside nginx puts nginx on the tunnel's bare address and a shell on `?1`. With
@@ -1025,7 +1025,7 @@ So the whole thing runs from a container with no command line at all:
 ```sh
 docker run -e TUNNELD_ORIGINS=http://host.docker.internal:3000,http://host.docker.internal:4000 \
            -e TUNNELD_LOG=info \
-           ghcr.io/tunnel-pizza/tunneld
+           ghcr.io/tunneld-it/tunneld
 ```
 
 | Command | Effect |
@@ -1599,7 +1599,7 @@ to gate on the answer reads the `route:` line, `none` when nothing works.
 | `POST` | The provider's `/ping` with a POST, the mint's method, sent at the same time as the GET. The mint itself is `POST /tunnel`, which this never sends. tunnel.pizza's edge answers `/ping` for GET, HEAD and POST itself, never from its origin, so a cold start cannot time the Mint lines out; a provider without it still shows whether HTTPS and a POST get there. | A POST is refused where the GET was answered (403, 405 or 407, or any `X-Proxy-Error`, which the line repeats). |
 | `HTTP/2` | A TLS handshake with the edge on TCP 7844, as `h2.cftunnel.com`, dialed from both sources of its address at once, the SRV targets and the DoH answer, each as soon as it resolves; the first handshake to complete counts. Judged on the handshake, not the connect, which some networks accept and then drop. | TCP 7844 is blocked. A filter matching on server name has to allow `h2.cftunnel.com`, not `argotunnel.com`. |
 | `relay` | The WebSocket at `wss://<provider>/relay` (then tunnel.pizza's), through the proxy when one applies, and the edge's TLS completed inside it. | WebSocket upgrades are refused, or something answers TLS for the relay with a certificate tunneld does not trust, named by issuer as for `GET`. |
-| `release` | This platform's release binary, `https://github.com/tunnel-pizza/tunneld/releases/download/<version>/tunneld-<os>-<arch>` (`latest` for a build that is not a release), followed one redirect at a time with a `HEAD` on each, so nothing is downloaded: `github.com` redirects to `release-assets.githubusercontent.com`, GitHub's CDN in front of Azure Blob storage, with a signed address that expires within the hour. The line is the chain of hosts and statuses. Informational: it does not change the route. | A host on the chain does not get through, or answers anything but the file; or there is no binary for this platform. |
+| `release` | This platform's release binary, `https://github.com/tunneld-it/tunneld/releases/download/<version>/tunneld-<os>-<arch>` (`latest` for a build that is not a release), followed one redirect at a time with a `HEAD` on each, so nothing is downloaded: `github.com` redirects to `release-assets.githubusercontent.com`, GitHub's CDN in front of Azure Blob storage, with a signed address that expires within the hour. The line is the chain of hosts and statuses. Informational: it does not change the route. | A host on the chain does not get through, or answers anything but the file; or there is no binary for this platform. |
 | `npm` | This platform's package as `npx` fetches it: its metadata from the registry (`registry.npmjs.org`, Cloudflare, or `npm_config_registry`), then a `HEAD` on its tarball and each redirect after it. `www.npmjs.com`, the website, is never on that path. Informational. | The registry or the tarball does not get through, or there is no package for this platform. |
 
 The route is the first of direct HTTP/2 and the relay that works, in the order
@@ -1611,7 +1611,7 @@ check.
 
 ## Running in a container
 
-`ghcr.io/tunnel-pizza/tunneld` is the same binary and nothing else: one layer on
+`ghcr.io/tunneld-it/tunneld` is the same binary and nothing else: one layer on
 `scratch`, `/usr/local/bin/tunneld`, running as root. The shell it offers is its
 built-in one. Another image can take that layer on top of its own, the way
 rowdy's `layers-from` does, to carry tunneld without installing it. Docker Hub has the same image, same digest and tags, as `tunneld/tunneld` and
@@ -1620,7 +1620,7 @@ configured with:
 
 ```sh
 docker run --rm -e TUNNELD_ORIGINS=http://host.docker.internal:8080 \
-  ghcr.io/tunnel-pizza/tunneld
+  ghcr.io/tunneld-it/tunneld
 ```
 
 An `attach://dockerd/` origin needs the daemon socket, which is root-equivalent on the
@@ -1629,14 +1629,14 @@ machine:
 
 ```sh
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  -e TUNNELD_ORIGINS=attach://dockerd/my-container ghcr.io/tunnel-pizza/tunneld
+  -e TUNNELD_ORIGINS=attach://dockerd/my-container ghcr.io/tunneld-it/tunneld
 ```
 
 Images are signed by digest, so a moved tag cannot inherit a signature, in
 both registries (`tunneld/tunneld:<tag>` verifies the same way):
 
 ```sh
-cosign verify ghcr.io/tunnel-pizza/tunneld:<tag> \
-  --certificate-identity-regexp '^https://github.com/tunnel-pizza/tunneld/' \
+cosign verify ghcr.io/tunneld-it/tunneld:<tag> \
+  --certificate-identity-regexp '^https://github.com/tunneld-it/tunneld/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

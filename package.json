@@ -25,11 +25,11 @@
   ],
   "homepage": "https://tunnel.pizza",
   "bugs": {
-    "url": "https://github.com/tunnel-pizza/tunneld/issues"
+    "url": "https://github.com/tunneld-it/tunneld/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tunnel-pizza/tunneld.git"
+    "url": "git+https://github.com/tunneld-it/tunneld.git"
   },
   "license": "FSL-1.1-MIT",
   "author": "Scaffoldly <legal@scaffold.ly> (https://github.com/scaffoldly)",
