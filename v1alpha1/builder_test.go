@@ -705,6 +705,8 @@ type fakeAttacher struct {
 	// mirrored is the prefixes Mirror was handed, nil when compose output
 	// was not turned on.
 	mirrored []string
+	// onStart fires at each Start, after HTTP_ORIGIN is recorded.
+	onStart func()
 	// onAnnounce fires when it arrives, which is after the URL is live and
 	// before the cache is written — the one signal a case can end a run on
 	// whether or not this run caches anything.
@@ -755,7 +757,12 @@ func (f *fakeAttacher) Mirror(_ io.Writer, prefixes []string) { f.mirrored = pre
 func (f *fakeAttacher) Exited() <-chan []int { return f.exited }
 
 // Start is what a run starts its programs through.
-func (f *fakeAttacher) Start() { f.origins = append(f.origins, os.Getenv(v1.HTTPOriginEnv)) }
+func (f *fakeAttacher) Start() {
+	f.origins = append(f.origins, os.Getenv(v1.HTTPOriginEnv))
+	if f.onStart != nil {
+		f.onStart()
+	}
+}
 
 func (f *fakeAttacher) Done() <-chan struct{} { return f.asked }
 
@@ -3278,22 +3285,23 @@ func TestSilent(t *testing.T) {
 		})
 	}
 
-	t.Run("the address comes once the spec is saved", func(t *testing.T) {
+	t.Run("the address comes once the spec is saved and the programs started", func(t *testing.T) {
 		h := newRunHarness(t, live(public), ":3000")
 		ctx, cancel := context.WithCancel(t.Context())
-		atSave := "unsaved"
+		atSave, atStart := "unsaved", "unstarted"
 		h.cache.onSave = func() { atSave = h.stdout.String(); cancel() }
+		h.attacher.onStart = func() { atStart = h.stdout.String() }
 		if err := h.run(t, ctx, "-s"); err != nil {
 			t.Fatalf("run() = %v", err)
 		}
 		if atSave != "" {
 			t.Errorf("stdout at the save = %q, want nothing yet", atSave)
 		}
+		if atStart != "" {
+			t.Errorf("stdout when the programs started = %q, want nothing yet", atStart)
+		}
 		if got, want := h.stdout.String(), public+"\n"; got != want {
 			t.Errorf("stdout = %q, want %q", got, want)
-		}
-		if len(h.attacher.origins) != 1 {
-			t.Errorf("programs started %d times, want once before the address", len(h.attacher.origins))
 		}
 	})
 
