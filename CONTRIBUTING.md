@@ -160,7 +160,7 @@ Requires Go 1.27.3 or later — the floor comes from `libtunnel`, the tunnel eng
 (see the comment in [`go.mod`](./go.mod)).
 
 ```sh
-git clone https://github.com/tunnel-pizza/tunneld.git
+git clone https://github.com/tunneld-it/tunneld.git
 cd tunneld
 make test     # unit tests, Go and the npm launcher's (needs Node 20+); never opens a tunnel
 make e2e      # builds the binary and every example, drives their offline paths
@@ -1111,7 +1111,7 @@ Patch releases are automatic. Every push to `main` runs the jobs in
 - **`image`** is a matrix of two cells, `linux/amd64` and `linux/arm64`, each
   building the [`Dockerfile`](./Dockerfile) natively (it builds on
   `BUILDPLATFORM` and lets Go cross-compile to `TARGETARCH`, so no QEMU) and
-  pushing to `ghcr.io/tunnel-pizza/tunneld` **by digest only** — no tag, not
+  pushing to `ghcr.io/tunneld-it/tunneld` **by digest only** — no tag, not
   even a temporary one — then signing that digest. The version is stamped
   inside, so `tunneld version` in the container names the release; what is
   not yet public is the name. This is what puts the image on the same footing

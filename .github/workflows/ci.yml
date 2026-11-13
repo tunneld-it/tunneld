@@ -483,8 +483,8 @@ jobs:
       # Signed by digest, not by tag: a tag can be moved to point at other
       # bytes, and a signature that followed it would vouch for whatever it
       # moved to. There is no tag yet anyway. Verify with:
-      #   cosign verify ghcr.io/tunnel-pizza/tunneld:<tag> \
-      #     --certificate-identity-regexp '^https://github.com/tunnel-pizza/tunneld/' \
+      #   cosign verify ghcr.io/tunneld-it/tunneld:<tag> \
+      #     --certificate-identity-regexp '^https://github.com/tunneld-it/tunneld/' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - name: sign the image by digest
         if: needs.prepare.outputs.signed == 'true'
