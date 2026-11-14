@@ -2,7 +2,7 @@
 
 This document is for everyone working on `tunneld` — humans and AI agents alike.
 It covers the layout, the local dev loop, the conventions that bite, and how a
-change gets from an issue to a release.
+change gets from a branch to a release.
 
 ## Where to find things
 
@@ -28,6 +28,7 @@ Deep-link by filename; line numbers will drift.
 | Local-program provider, pty settings, the terminal shim (`ttyshim/`, rebuilt by `make ttyshim`), and pipes on a machine with no pseudo-terminals | [`v1alpha1/attach/shell/`](./v1alpha1/attach/shell)             |
 | The MCP server served to agents on the control path | [`v1alpha1/mcp/`](./v1alpha1/mcp) |
 | What every MCP tool shares, what each answers and how it refuses, and one package per tool | [`v1alpha1/mcp/tool/`](./v1alpha1/mcp/tool), [`v1alpha1/mcp/types/`](./v1alpha1/mcp/types), [`v1alpha1/mcp/errors/`](./v1alpha1/mcp/errors) and its [`refusals/`](./v1alpha1/mcp/errors/refusals), [`v1alpha1/mcp/tools/`](./v1alpha1/mcp/tools) |
+| An MCP run's stdout held for its client alone: fd 1 copied for the transport, pointed at stderr | [`v1alpha1/util/stdioutil/`](./v1alpha1/util/stdioutil) |
 | Experiments: the only way in to what lives under `v0exp1/internal/` | [`v0exp1/v0exp1.go`](./v0exp1/v0exp1.go) |
 | The shell built in for a machine with none (Elvish), and the commands it brings (u-root) | [`v0exp1/internal/shell/builtin/`](./v0exp1/internal/shell/builtin) |
 | Ring of tunneld's own log lines (`logs.Log`)   | [`v1alpha1/logs/`](./v1alpha1/logs)                             |
@@ -985,24 +986,21 @@ are easy to forget:
 
 ## Branch / PR flow
 
-**Every change starts with an issue** — no exceptions, including retroactive
-cleanups. The PR body carries a `Closes #<n>` line for each issue it settles,
-so the merge auto-closes them and leaves a paper trail.
+Every change is a branch and a PR; an issue is optional. When the PR settles
+one, its body carries a `Closes #<n>` line for it, so the merge auto-closes it.
 
 ```sh
-gh issue create --title "…" --body "…"                    # 1. issue first
-git switch -c <type>/<topic>                              # 2. branch
+git switch -c <type>/<topic>                              # 1. branch
 # ... edits, commit ...
 git push -u origin <type>/<topic>
-gh pr create --title "<type>: …" --body "Closes #<n>. …"  # 3. PR refs the issue
+gh pr create --title "<type>: …" --body "…"               # 2. PR
 # CI green ⇒
 gh pr merge <pr#> --squash --delete-branch
 ```
 
-**A PR may close several issues** when they land together or touch the same
-place. Name the branch for what they share (`feat/mcp-stdio`), make a commit
-per issue so each reads on its own in review (the squash flattens them), and
-give every issue its own line:
+**A PR may carry several fixes**, with or without issues behind them. Name the
+branch for what they share (`feat/mcp-stdio`) and give every issue it closes
+its own line:
 
 ```text
 Closes #370
@@ -1055,8 +1053,8 @@ directory, along with the compose example's volume and the local image.
 
 ## Pull requests
 
-- Keep PRs focused: one theme per PR, which may be one issue or several that
-  land together (see [Branch / PR flow](#branch--pr-flow)).
+- A PR may carry several fixes (see [Branch / PR flow](#branch--pr-flow)).
+  Fewer PRs beat finer ones: fold related fixes into the open branch.
 - Include test coverage for behavior changes — unit tests beside the code
   (`something.go` → `something_test.go`) for library changes, e2e tests
   (`e2e/e2e_test.go`) for anything visible at the command line.

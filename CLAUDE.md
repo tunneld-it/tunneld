@@ -51,9 +51,9 @@ agent-specific framing.
   the builder in `v1alpha1`, so tunneld embeds as another program's subcommand.
   A feature that only works when tunneld is `os.Args[0]` is in the wrong
   package.
-- **Every change starts with an issue**, then a branch + PR with a `Closes #<n>`
-  line per issue: a PR may close several that land together, and PRs may be
-  stacked. Don't push to `main`. Full flow in
+- **Every change is a branch + PR**; an issue is optional. A PR may carry
+  several fixes, with a `Closes #<n>` line per issue it settles,
+  and PRs may be stacked. Don't push to `main`. Full flow in
   [CONTRIBUTING.md → Branch / PR flow](./CONTRIBUTING.md#branch--pr-flow).
 - Don't commit secrets. [`.gitignore`](./.gitignore) covers `.env*`, `.claude/`
   and `*.local`. The cached tunnel spec is credentials and needs no entry: it
@@ -108,6 +108,7 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
     ```sh
     gh api repos/$REPO/branches/main/protection/required_status_checks --jq '.contexts'
     ```
+  > Bypassed 2026-11-14: ttyshim (amd64)/(arm64) left un-required on main by choice.
 
 - **Private vulnerability reporting.** Lets researchers file advisories privately
   (see [SECURITY.md](./SECURITY.md)).
