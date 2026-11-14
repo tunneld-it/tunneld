@@ -362,7 +362,7 @@ npm package.
 ## Contributing
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) has the layout, the dev loop, the
-conventions, and how a change gets from an issue to a release. Security
+conventions, and how a change gets from a branch to a release. Security
 reports go through [SECURITY.md](./SECURITY.md).
 
 ## License

@@ -21,29 +21,34 @@ import (
 	"github.com/tunnel-pizza/tunneld/v1alpha1/mcp/tool/tooltest"
 )
 
-// TestWithStdioTakesTheStreamsWhenApplied pins that WithStdio reads os.Stdin
-// and os.Stdout as it is applied, not when the server connects on a goroutine
-// of its own: by then whoever set them may have put them back.
-func TestWithStdioTakesTheStreamsWhenApplied(t *testing.T) {
+// TestWithStdio pins the streams: both given serve the server on them, and
+// closing its writer leaves the one given open; either missing serves none.
+func TestWithStdio(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
 	t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
-	was := os.Stdin
-	os.Stdin = r
-	m := v1.Apply(&McpImpl{}, WithStdio(true))
-	os.Stdin = was
 
+	m := v1.Apply(&McpImpl{}, WithStdio(r, w))
 	got, ok := m.stdio.(*sdk.IOTransport)
-	if !ok || got.Reader != r {
-		t.Fatalf("stdio = %#v, want an IOTransport reading the stdin it was applied with", m.stdio)
+	if !ok {
+		t.Fatalf("stdio = %#v, want an IOTransport", m.stdio)
 	}
 	if err := got.Writer.Close(); err != nil {
-		t.Errorf("closing the writer = %v, want it to leave os.Stdout open", err)
+		t.Errorf("closing the writer = %v, want it to leave w open", err)
 	}
-	if _, err := os.Stdout.Stat(); err != nil {
-		t.Errorf("os.Stdout after the writer closed: %v", err)
+	if _, err := io.WriteString(w, "open"); err != nil {
+		t.Errorf("w after the writer closed: %v", err)
+	}
+
+	for name, opt := range map[string]Option{
+		"no reader": WithStdio(nil, w),
+		"no writer": WithStdio(r, nil),
+	} {
+		if m := v1.Apply(&McpImpl{}, opt); m.stdio != nil {
+			t.Errorf("%s: stdio = %#v, want none", name, m.stdio)
+		}
 	}
 }
 
@@ -122,6 +127,49 @@ func TestWithContext(t *testing.T) {
 	cancel()
 	if m.stop == nil || m.stop() {
 		t.Error("the context is done and the server was not closed")
+	}
+}
+
+// TestWithEnded pins when the stdio session's end is reported: the client
+// closing stdin is, the server being closed first is not.
+func TestWithEnded(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		close bool
+		want  bool
+	}{
+		{"the client closes stdin", false, true},
+		{"the server is closed first", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("os.Pipe: %v", err)
+			}
+			t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+			ended := make(chan struct{})
+			m := New(WithStdio(r, io.Discard), WithEnded(func() { close(ended) }))
+			if tc.close {
+				_ = m.Close()
+			}
+			_ = w.Close()
+
+			wait := 5 * time.Second
+			if !tc.want {
+				wait = 200 * time.Millisecond
+			}
+			select {
+			case <-ended:
+				if !tc.want {
+					t.Error("ended was called for a server closed first")
+				}
+			case <-time.After(wait):
+				if tc.want {
+					t.Error("ended was not called once stdin closed")
+				}
+			}
+			_ = m.Close()
+		})
 	}
 }
 
@@ -227,12 +275,11 @@ func TestATerminalOverMcp(t *testing.T) {
 	}
 }
 
-// TestOriginToolsOverStdio pins who reaches origin_add and origin_remove
-// without a token: a client on the server's own connection, as stdio is,
-// gets as far as the tool (not implemented yet); one through the HTTP
-// handler with no token, as a call over the tunnel with its secret is, is
-// refused.
-func TestOriginToolsOverStdio(t *testing.T) {
+// TestOriginToolsWithoutAToken pins who reaches origin_add and origin_remove
+// without a token: a client on the server's own connection, as stdio is, and
+// one through the HTTP handler with no token, as a call over the tunnel with
+// its secret is, both get as far as the tool (not implemented yet).
+func TestOriginToolsWithoutAToken(t *testing.T) {
 	m := New(WithOrigins(tooltest.Origins(t, "exec:///bin/sh")))
 	cs := connect(t, m)
 	for name, args := range map[string]map[string]any{
@@ -249,8 +296,8 @@ func TestOriginToolsOverStdio(t *testing.T) {
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		rec := httptest.NewRecorder()
 		m.Handler().ServeHTTP(rec, req)
-		if !strings.Contains(rec.Body.String(), "The tunnel's secret can't call "+name) {
-			t.Errorf("%s through the HTTP handler = %d %s; want the secret refused", name, rec.Code, rec.Body)
+		if !strings.Contains(rec.Body.String(), name+" is not implemented yet") {
+			t.Errorf("%s through the HTTP handler = %d %s; want not implemented yet", name, rec.Code, rec.Body)
 		}
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	v1 "github.com/tunnel-pizza/tunneld/v1"
@@ -46,9 +45,10 @@ type McpImpl struct {
 	stop    func() bool
 
 	// stdio is the transport the server also runs on, nil for none; cancel
-	// ends that run.
+	// ends that run, and ended is told when it ends without being cancelled.
 	stdio  sdk.Transport
 	cancel context.CancelFunc
+	ended  func()
 }
 
 // New returns a McpImpl configured by opts: no origins, and a log that
@@ -79,8 +79,15 @@ func New(opts ...Option) *McpImpl {
 		ctx, cancel := context.WithCancel(base)
 		m.cancel = cancel
 		go func() {
-			if err := m.server.Run(ctx, m.stdio); err != nil && ctx.Err() == nil {
+			err := m.server.Run(ctx, m.stdio)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
 				m.log.Warn("mcp: stdio ended", "error", err)
+			}
+			if m.ended != nil {
+				m.ended()
 			}
 		}()
 	}
@@ -108,20 +115,29 @@ func WithCache(c cache.Cache) Option {
 	return func(m *McpImpl) { m.cache = c }
 }
 
-// WithStdio serves the same server on this process's stdin and stdout as
-// well as the HTTP handler, for as long as the server is open: what an MCP
-// client that started the process speaks.
-//
-// The streams are read here, as the option is applied, rather than when the
-// server connects on a goroutine of its own: what os.Stdin and os.Stdout name
-// is the process's to change in between.
-func WithStdio(on bool) Option {
+// WithStdio serves the same server on r and w as well as the HTTP handler,
+// for as long as the server is open: the stdin and stdout of the MCP client
+// that started the process. Closing the server closes r, when it is a
+// Closer, and leaves w open. Either nil serves none.
+func WithStdio(r io.Reader, w io.Writer) Option {
 	return func(m *McpImpl) {
 		m.stdio = nil
-		if on {
-			m.stdio = &sdk.IOTransport{Reader: os.Stdin, Writer: openWriter{os.Stdout}}
+		if r == nil || w == nil {
+			return
 		}
+		rc, ok := r.(io.ReadCloser)
+		if !ok {
+			rc = io.NopCloser(r)
+		}
+		m.stdio = &sdk.IOTransport{Reader: rc, Writer: openWriter{w}}
 	}
+}
+
+// WithEnded calls f once the stdio session ends without the server being
+// closed: the client closed stdin, or the session failed. Not called for a
+// server with no stdio, nor once Close or the context has ended it.
+func WithEnded(f func()) Option {
+	return func(m *McpImpl) { m.ended = f }
 }
 
 // openWriter is w with a Close that leaves it open: the server closing its

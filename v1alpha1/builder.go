@@ -35,6 +35,7 @@ import (
 	"github.com/tunnel-pizza/tunneld/v1alpha1/router"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/run"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/util/netutil"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/util/stdioutil"
 )
 
 // WithName sets the built command's name — the verb in usage strings and
@@ -435,9 +436,18 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		return nil
 	}
 
-	// An MCP run's stdin and stdout are its client's (mcp.WithStdio), so what
-	// the run would print there goes to stderr.
+	// An MCP run's stdin and stdout are its client's (mcp.WithStdio), locked
+	// before anything writes: the transport holds stdout alone, and what the
+	// run, a library or a child would print there goes to stderr.
+	var stdin io.Reader
+	var stdout io.Writer
 	if b.mcp {
+		client, restore, err := stdioutil.LockStdout()
+		if err != nil {
+			return fmt.Errorf("--mcp: stdout: %w", err)
+		}
+		defer restore()
+		stdin, stdout = os.Stdin, client
 		cmd.SetOut(stderr)
 	}
 
@@ -627,6 +637,12 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		attached.Start()
 	}
 
+	// An MCP client closing stdin ends the run, as a signal would. It cancels
+	// the run's context only: the router and the server outlive it until the
+	// tunnel has drained.
+	running, end := context.WithCancel(ctx)
+	defer end()
+
 	// The router lasts the run, not one tunnel: the run cancels it once it is
 	// over and its tunnel has drained. It is stood up here, immediately before
 	// the tunnel it is handed to, so nothing between the two can return and
@@ -649,7 +665,8 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 			mcp.WithAttached(attached),
 			mcp.WithCache(spec),
 			mcp.WithLog(log),
-			mcp.WithStdio(b.mcp),
+			mcp.WithStdio(stdin, stdout),
+			mcp.WithEnded(end),
 		)),
 		// TODO(#209): tell the operator when a visitor finds an origin that
 		// is not listening, once per outage. The router logs every such
@@ -660,16 +677,10 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	ctx = running
 
 	// kubectl debug -i: Ctrl+C ends kubectl and never reaches this process, so
 	// a line on stdin is what stops the run, as a signal would.
-	//
-	// TODO: lock stdio for an MCP run at the fd level, before anything
-	// writes: dup(1) a private stdout for the MCP transport, dup2(2, 1) so
-	// os.Stdout, libraries and inherited children land on stderr, and hand
-	// mcp.WithStdio that reader and writer rather than os.Stdin and
-	// os.Stdout. SetStdHandle on Windows. Until then only cmd's stdout is
-	// redirected, at the top of Run.
 	piped := isPod() && isPipe(cmd.InOrStdin()) && !b.mcp
 	hint := stopHint
 	if piped {

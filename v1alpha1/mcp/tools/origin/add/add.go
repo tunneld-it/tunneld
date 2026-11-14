@@ -17,7 +17,7 @@ import (
 var Tool = tool.New(sdk.Tool{
 	Name:        "origin_add",
 	Title:       "Add an origin",
-	Description: "Adds an origin to this machine's tunnel, as tunneld's command line takes one: :3000, sh, exec:///bin/bash, attach://dockerd/web. Answers the machine and the new origin's session. Only the client that started this tunneld, over stdio, or a sign-in holding tunnel:origins, may call it. Not implemented yet: it refuses every call.",
+	Description: "Adds an origin to this machine's tunnel, as tunneld's command line takes one: :3000, sh, exec:///bin/bash, attach://dockerd/web. Answers the machine and the new origin's session. Only the client that started this tunneld, over stdio, the tunnel's secret, or a sign-in holding tunnel:origins, may call it. Not implemented yet: it refuses every call.",
 	// Starts a program or attaches a container, and takes nothing away.
 	Annotations: &sdk.ToolAnnotations{DestructiveHint: new(false), OpenWorldHint: new(false)},
 }, run())

@@ -35,14 +35,6 @@ func NotImplemented(tool string) error {
 		fmt.Errorf("%s is not implemented yet", tool))
 }
 
-// SecretRefused is the refusal for tool, called over the tunnel with its
-// secret: only the client that started this tunneld, over stdio, or a
-// sign-in holding scope may call it.
-func SecretRefused(tool, scope string) error {
-	return refusal(fmt.Sprintf("%s answers the client that started this tunneld, over stdio, or a sign-in holding %s", tool, scope),
-		fmt.Errorf("The tunnel's secret can't call %s", tool))
-}
-
 // NoTerminal is the refusal for a run with nothing a terminal tool can
 // reach: no program or container, which until one is added is a run with no
 // origins at all.
@@ -130,7 +122,7 @@ func Undiscoverable(tool string) error {
 // caller an unowned public tunnel let in: that tunnel's terminals are open
 // to anyone with an address, its origins to nobody but the one who ran it.
 func Unowned(tool string) error {
-	return refusal("Only the client that started its tunneld, over stdio, can",
+	return refusal("Only the client that started its tunneld, over stdio, or the tunnel's secret can",
 		fmt.Errorf("%s can't change a tunnel nobody owns", tool))
 }
 

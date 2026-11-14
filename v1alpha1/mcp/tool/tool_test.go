@@ -181,8 +181,8 @@ func TestStdio(t *testing.T) {
 }
 
 // TestChangesOrigins pins who may change a run's origins: the stdio client,
-// and a token holding tunnel:origins; the tunnel's secret, a token without
-// the scope, and one an unowned tunnel let in are refused, saying why, and
+// the tunnel's secret, and a token holding tunnel:origins; a token without
+// the scope, and one an unowned tunnel let in, are refused, saying why, and
 // logged.
 func TestChangesOrigins(t *testing.T) {
 	overHTTP := &sdk.CallToolRequest{Extra: &sdk.RequestExtra{Header: http.Header{}}}
@@ -196,7 +196,7 @@ func TestChangesOrigins(t *testing.T) {
 	}{
 		"the stdio client":                 {t.Context(), &sdk.CallToolRequest{}, ""},
 		"a token with tunnel:origins":      {origins, overHTTP, ""},
-		"the tunnel's secret":              {t.Context(), overHTTP, "The tunnel's secret can't call a_tool"},
+		"the tunnel's secret":              {t.Context(), overHTTP, ""},
 		"a token without the scope":        {exec, overHTTP, "a_tool needs the tunnel:origins scope"},
 		"a token an unowned tunnel let in": {unowned, overHTTP, "a_tool can't change a tunnel nobody owns"},
 	} {

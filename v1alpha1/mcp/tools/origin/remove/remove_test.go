@@ -23,16 +23,16 @@ func TestOriginRemoveListing(t *testing.T) {
 	}
 }
 
-// TestOriginRemove pins the call: over the tunnel, the secret and a token without
-// tunnel:origins refused, saying why; a token with it, and the stdio client,
-// get as far as the tool, which is not implemented yet.
+// TestOriginRemove pins the call: over the tunnel, a token without
+// tunnel:origins refused, saying why; the secret, a token with the scope, and
+// the stdio client get as far as the tool, which is not implemented yet.
 func TestOriginRemove(t *testing.T) {
 	c := tool.Context{Origins: tooltest.Origins(t, "exec:///bin/sh"), Log: slog.New(slog.DiscardHandler)}
 	for name, tc := range map[string]struct {
 		access *auth.Access
 		says   string
 	}{
-		"the tunnel's secret":         {nil, "The tunnel's secret can't call origin_remove"},
+		"the tunnel's secret":         {nil, "origin_remove is not implemented yet"},
 		"a token without the scope":   {&auth.Access{Sub: "github:1", Scopes: []string{"mcp", "tunnel:exec"}}, "origin_remove needs the tunnel:origins scope"},
 		"a token with tunnel:origins": {&auth.Access{Sub: "github:1", Scopes: []string{"mcp", "tunnel:origins"}}, "origin_remove is not implemented yet"},
 	} {
