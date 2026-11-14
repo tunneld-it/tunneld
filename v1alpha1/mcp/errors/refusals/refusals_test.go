@@ -54,7 +54,6 @@ func TestSays(t *testing.T) {
 		says []string
 	}{
 		"NotImplemented": {NotImplemented("origin_add"), []string{"origin_add is not implemented yet", "This run's origins are the ones tunneld was started with; terminal_sessions lists them"}},
-		"SecretRefused":  {SecretRefused("origin_add", "tunnel:origins"), []string{"The tunnel's secret can't call origin_add", "origin_add answers the client that started this tunneld, over stdio, or a sign-in holding tunnel:origins"}},
 		"NoTerminal":     {NoTerminal(), []string{"This run serves no terminal: it has no program (exec) or container (attach) to type into", "A terminal is there once tunneld runs a program or attaches a container; terminal_sessions with scheme http lists the web addresses it serves, if any"}},
 		"Unlisted":       {Unlisted(fmt.Errorf("names origin 5")), []string{"names origin 5", "terminal_sessions lists the terminals"}},
 		"NotATerminal":   {NotATerminal("https://0tabc.tunneld.domain/", v1.Origin{Index: 0, URI: *shell, Scheme: v1.HttpScheme}), []string{"https://0tabc.tunneld.domain/ is not a terminal: origin 0 is http", "terminal_sessions lists the terminals"}},
@@ -65,7 +64,7 @@ func TestSays(t *testing.T) {
 		"Unwritable":     {Unwritable(fmt.Errorf("permission denied")), []string{"Could not write the attachments: permission denied", "nothing was typed; pick a path tunneld's user can write"}},
 		"Unsendable":     {Unsendable(fmt.Errorf("%w %q: step 2", attach.ErrUnknownKey, "Hyper")), []string{`attach: unknown key "Hyper": step 2`, "each step is exactly one of text or key"}},
 		"Undiscoverable": {Undiscoverable("terminal_sessions"), []string{"terminal_sessions does not list a tunnel nobody owns", "Act on a terminal you were given the address of: terminal_exec, terminal_read, terminal_wait or terminal_screen with https://hostname/, or https://hostname/?n for origin n"}},
-		"Unowned":        {Unowned("origin_add"), []string{"origin_add can't change a tunnel nobody owns", "Only the client that started its tunneld, over stdio, can"}},
+		"Unowned":        {Unowned("origin_add"), []string{"origin_add can't change a tunnel nobody owns", "Only the client that started its tunneld, over stdio, or the tunnel's secret can"}},
 		"UnknownScheme":  {UnknownScheme("ssh"), []string{`"ssh" is not a scheme`, "scheme must be exec, attach or http"}},
 	} {
 		if got := texts(t, tc.err); !slices.Equal(got, tc.says) {

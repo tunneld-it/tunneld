@@ -275,12 +275,11 @@ func TestATerminalOverMcp(t *testing.T) {
 	}
 }
 
-// TestOriginToolsOverStdio pins who reaches origin_add and origin_remove
-// without a token: a client on the server's own connection, as stdio is,
-// gets as far as the tool (not implemented yet); one through the HTTP
-// handler with no token, as a call over the tunnel with its secret is, is
-// refused.
-func TestOriginToolsOverStdio(t *testing.T) {
+// TestOriginToolsWithoutAToken pins who reaches origin_add and origin_remove
+// without a token: a client on the server's own connection, as stdio is, and
+// one through the HTTP handler with no token, as a call over the tunnel with
+// its secret is, both get as far as the tool (not implemented yet).
+func TestOriginToolsWithoutAToken(t *testing.T) {
 	m := New(WithOrigins(tooltest.Origins(t, "exec:///bin/sh")))
 	cs := connect(t, m)
 	for name, args := range map[string]map[string]any{
@@ -297,8 +296,8 @@ func TestOriginToolsOverStdio(t *testing.T) {
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		rec := httptest.NewRecorder()
 		m.Handler().ServeHTTP(rec, req)
-		if !strings.Contains(rec.Body.String(), "The tunnel's secret can't call "+name) {
-			t.Errorf("%s through the HTTP handler = %d %s; want the secret refused", name, rec.Code, rec.Body)
+		if !strings.Contains(rec.Body.String(), name+" is not implemented yet") {
+			t.Errorf("%s through the HTTP handler = %d %s; want not implemented yet", name, rec.Code, rec.Body)
 		}
 	}
 }

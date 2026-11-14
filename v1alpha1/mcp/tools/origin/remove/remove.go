@@ -17,7 +17,7 @@ import (
 var Tool = tool.New(sdk.Tool{
 	Name:        "origin_remove",
 	Title:       "Remove an origin",
-	Description: "Removes an origin from this machine's tunnel, named by its index or its public address; its index is never given to another. Answers the machine and the removed origin's session. Only the client that started this tunneld, over stdio, or a sign-in holding tunnel:origins, may call it. Not implemented yet: it refuses every call.",
+	Description: "Removes an origin from this machine's tunnel, named by its index or its public address; its index is never given to another. Answers the machine and the removed origin's session. Only the client that started this tunneld, over stdio, the tunnel's secret, or a sign-in holding tunnel:origins, may call it. Not implemented yet: it refuses every call.",
 	// Ends the program or the container attach the origin's terminal holds.
 	Annotations: &sdk.ToolAnnotations{DestructiveHint: new(true), OpenWorldHint: new(false)},
 }, run())
