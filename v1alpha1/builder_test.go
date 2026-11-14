@@ -962,18 +962,19 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// mcpStdin hands an --mcp run's stdio transport a stdin that is already at
-// its end, for the rest of the case, rather than the test process's own.
-func mcpStdin(t *testing.T) {
+// mcpStdin hands an --mcp run's stdio transport a pipe for stdin, for the
+// rest of the case, rather than the test process's own. The client holds the
+// end it returns: closing it ends the run.
+func mcpStdin(t *testing.T) *os.File {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	w.Close()
 	was := os.Stdin
 	os.Stdin = r
-	t.Cleanup(func() { os.Stdin = was; r.Close() })
+	t.Cleanup(func() { os.Stdin = was; w.Close(); r.Close() })
+	return w
 }
 
 func newRunHarness(t *testing.T, tun *fakeTunnel, urls ...string) *runHarness {
@@ -2935,6 +2936,24 @@ func TestMCPRunKeepsStdoutForItsClient(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), public) {
 		t.Errorf("stderr = %q, want the address %q", h.stderr.String(), public)
+	}
+}
+
+// TestMCPClientClosingStdinEndsTheRun pins how an --mcp run ends without a
+// signal: its client exits, stdin closes, and the run returns as if stopped,
+// rather than holding the tunnel open for nobody.
+func TestMCPClientClosingStdinEndsTheRun(t *testing.T) {
+	client := mcpStdin(t)
+	h := newRunHarness(t, live("https://foo.tunneld.domain/"), "http://localhost:3000")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	h.cache.onSave = func() { _ = client.Close() }
+
+	if err := h.run(t, ctx, "--mcp"); err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the run outlived its MCP client: it ended on the timeout")
 	}
 }
 
