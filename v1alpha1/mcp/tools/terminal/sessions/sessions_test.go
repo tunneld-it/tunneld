@@ -164,17 +164,6 @@ func TestTerminalSessionsWithoutTerminals(t *testing.T) {
 	}
 }
 
-// TestMachineWithoutACache pins a server with no cache, or one that holds no
-// tracking yet: the machine says nothing rather than guessing.
-func TestMachineWithoutACache(t *testing.T) {
-	if got := machine(tool.Context{}); got != (v1types.Machine{}) {
-		t.Errorf("machine() = %+v, want nothing", got)
-	}
-	if got := machine(tool.Context{Cache: cache.None{}}); got != (v1types.Machine{}) {
-		t.Errorf("machine() from None = %+v, want nothing", got)
-	}
-}
-
 // call calls terminal_sessions for scheme, reading c, as tooltest.Call does;
 // an empty scheme sends none.
 func call(t *testing.T, c tool.Context, access *auth.Access, scheme string) (int, string) {

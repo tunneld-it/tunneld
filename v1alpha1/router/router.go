@@ -31,18 +31,19 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	v1 "github.com/tunnel-pizza/tunneld/v1"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/auth"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/cache"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/mcp"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/util/netutil"
 )
 
 // Cookie is the sticky-routing cookie an explicit top-level pick answers
@@ -437,10 +438,6 @@ func (r *RouterImpl) Route(ctx context.Context, opts ...Option) (*url.URL, error
 	route := *r
 	v1.Apply(&route, opts...)
 	origins, front, log := route.origins, route.wrap, route.log
-	n := 0
-	if origins != nil {
-		n = origins.Len()
-	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("router: listen: %w", err)
@@ -450,14 +447,13 @@ func (r *RouterImpl) Route(ctx context.Context, opts ...Option) (*url.URL, error
 	// it has its own guard (authorize), and the panel answers nothing there.
 	//
 	// With no origins the tunnel still comes up and the control path still
-	// answers; every other request is a 404 until there is something to reach.
-	// The proxy, the redirect and the panel each assume at least one origin.
+	// answers; every other request is a 404 until one is added.
 	var site http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "tunneld: nothing is exposed here yet", http.StatusNotFound)
 	})
-	if n > 0 {
-		site = redirect(n, logged(route.requests, proxy(origins, log)))
-		if front != nil {
+	if origins != nil {
+		site = redirect(origins, logged(route.requests, proxy(origins, site, log)))
+		if front != nil && origins.Len() > 0 {
 			site = front(site)
 		}
 	}
@@ -486,6 +482,10 @@ func (r *RouterImpl) Route(ctx context.Context, opts ...Option) (*url.URL, error
 	go func() { _ = srv.Serve(l) }()
 
 	local := &url.URL{Scheme: "http", Host: l.Addr().String()}
+	n := 0
+	if origins != nil {
+		n = origins.Len()
+	}
 	log.Info("routing origins", "listen", local.Host, "origins", n)
 	return local, nil
 }
@@ -865,13 +865,26 @@ func (r *RouterImpl) Cancel() {
 // the scope of the origin's own scheme, auth.Scope, whatever address it is
 // dialed at; anything else is
 // auth.InsufficientScope naming it.
-func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
+func proxy(origins v1.Origins, empty http.Handler, log *slog.Logger) http.Handler {
+	// The origins as they stand, taken again when one is added: the list
+	// only grows, so a request picked against one snapshot routes the same
+	// against the next.
+	var mu sync.Mutex
 	dialed, all := origins.Dialable(), origins.All()
+	current := func() ([]*url.URL, []v1.Origin) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(all) != origins.Len() {
+			dialed, all = origins.Dialable(), origins.All()
+		}
+		return dialed, all
+	}
 	ws, _ := origins.WebSocket()
 	paths := &remembered{origin: map[string]int{}}
 	// index is the origin a request was routed to, found in the list by the
 	// host it was sent to rather than read off the request; -1 for none.
 	index := func(host string) int {
+		dialed, _ := current()
 		for i, o := range dialed {
 			if o.Host == host {
 				return i
@@ -882,6 +895,7 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 	// pick is the origin a request goes to, by the rules above, and the
 	// query to forward with the routing segments dropped.
 	pick := func(in *http.Request) routed {
+		dialed, _ := current()
 		if len(dialed) == 1 {
 			return routed{query: in.URL.RawQuery}
 		}
@@ -951,9 +965,10 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 		return routed{ix: ix, query: strings.Join(kept, "&"), explicit: explicit}
 	}
 	rp := &httputil.ReverseProxy{
-		Transport: transport(dialed),
+		Transport: transport(),
 		Rewrite: func(r *httputil.ProxyRequest) {
 			to, _ := r.In.Context().Value(routedKey{}).(routed)
+			dialed, all := current()
 			origin := dialed[to.ix]
 			r.Out.URL.RawQuery = to.query
 			if len(dialed) > 1 {
@@ -972,7 +987,7 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 			// key on it. A remote one, on a public name, answers that name
 			// only, so it gets it, and is told the tunnel's in
 			// X-Forwarded-Host below.
-			local := local(origin.Hostname())
+			local := netutil.Local(origin.Hostname())
 			if local {
 				r.Out.Host = r.In.Host
 			}
@@ -1001,6 +1016,17 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 					r.Out.Header.Set("X-Forwarded-Proto", "https")
 				}
 			}
+			// The origin's own headers, in place of any the visitor sent
+			// under those names: a visitor cannot choose what it is sent.
+			for name, values := range all[to.ix].Headers {
+				r.Out.Header[name] = slices.Clone(values)
+			}
+			// An origin added while the run lasts is dialed only at a public
+			// address: a name that resolves onto this machine or its network
+			// would reach what nobody added.
+			if all[to.ix].Added {
+				r.Out = r.Out.WithContext(context.WithValue(r.Out.Context(), publicKey{}, true))
+			}
 		},
 		// An origin that cannot be reached is the one failure here an
 		// operator can act on, so it is said at warn, naming the origin. A
@@ -1028,6 +1054,7 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 		// something is listening there, and a page saying nothing is would be
 		// wrong.
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			dialed, _ := current()
 			ix := index(r.URL.Host)
 			origin := "unknown"
 			if ix >= 0 {
@@ -1109,11 +1136,16 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 		ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelDebug),
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origins.Len() == 0 {
+			empty.ServeHTTP(w, r)
+			return
+		}
 		to := pick(r)
 		if picked, ok := r.Context().Value(pickedKey{}).(*int); ok {
 			*picked = to.ix
 		}
 		if access, ok := auth.AccessOf(r.Context()); ok {
+			_, all := current()
 			if scope := auth.Scope(all[to.ix].Scheme); !access.Has(scope) {
 				auth.InsufficientScope(w, r, scope)
 				return
@@ -1133,6 +1165,10 @@ type routed struct {
 
 type routedKey struct{}
 
+// publicKey marks an outbound request whose origin may be dialed only at a
+// public address.
+type publicKey struct{}
+
 // redirect canonicalizes referer-routed navigations onto an explicit ?n URL,
 // defending referer routing against decay: a GET/HEAD document or iframe
 // navigation with no routing parameter of its own but a same-host referer
@@ -1141,11 +1177,12 @@ type routedKey struct{}
 // origin, so its own subresources — whose Referer is the new URL — keep
 // routing instead of falling back to the default. A single origin passes
 // everything through.
-func redirect(n int, next http.Handler) http.Handler {
-	if n < 2 {
-		return next
-	}
+func redirect(origins v1.Origins, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origins.Len() < 2 {
+			next.ServeHTTP(w, r)
+			return
+		}
 		dest := r.Header.Get("Sec-Fetch-Dest")
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
 			(dest == "document" || dest == "iframe" || dest == "frame") {
@@ -1274,7 +1311,7 @@ var forwarding = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X
 // on the outbound request context.
 type stickyKey struct{}
 
-// transport dials the origins, adding TLS when any origin is https: without
+// transport dials the origins, with TLS for an https one: without
 // verification for one on this machine, which presents whatever certificate
 // its dev server made up, and verified as any client would for a remote one.
 // The TLS config only engages on https dials, so http origins share it.
@@ -1283,51 +1320,49 @@ type stickyKey struct{}
 // dial or handshake timeout and never reap an idle connection: one https dev
 // server that hangs on accept would then hold requests to every origin behind
 // this router.
-func transport(origins []*url.URL) http.RoundTripper {
+func transport() http.RoundTripper {
 	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.DialContext = dial
-	for _, u := range origins {
-		if u.Scheme == "https" {
-			t.TLSClientConfig = &tls.Config{
-				InsecureSkipVerify: true,
-				// What the tunnel sends a remote origin may be a credential.
-				VerifyConnection: func(cs tls.ConnectionState) error {
-					if local(cs.ServerName) {
-						return nil
-					}
-					opts := x509.VerifyOptions{DNSName: cs.ServerName, Intermediates: x509.NewCertPool()}
-					for _, c := range cs.PeerCertificates[1:] {
-						opts.Intermediates.AddCert(c)
-					}
-					_, err := cs.PeerCertificates[0].Verify(opts)
-					return err
-				},
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		public, _ := ctx.Value(publicKey{}).(bool)
+		return dial(ctx, network, addr, public)
+	}
+	t.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: true,
+		// What the tunnel sends a remote origin may be a credential.
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if netutil.Local(cs.ServerName) {
+				return nil
 			}
-			break
-		}
+			opts := x509.VerifyOptions{DNSName: cs.ServerName, Intermediates: x509.NewCertPool()}
+			for _, c := range cs.PeerCertificates[1:] {
+				opts.Intermediates.AddCert(c)
+			}
+			_, err := cs.PeerCertificates[0].Verify(opts)
+			return err
+		},
 	}
 	return t
 }
 
-// dial is how transport reaches an origin's address.
-var dial = http.DefaultTransport.(*http.Transport).DialContext
+// dial is how transport reaches an origin's address: only at a public one,
+// when public is set, whatever the name resolved to.
+var dial = func(ctx context.Context, network, addr string, public bool) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	if public {
+		d.Control = publicOnly
+	}
+	return d.DialContext(ctx, network, addr)
+}
 
-// local is whether host is on this machine or its network: a loopback,
-// unspecified, private or link-local address, a single-label name (a
-// Compose service), or a name under a suffix no public DNS serves. Anything
-// else, a public name or address, is remote.
-func local(host string) bool {
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+// publicOnly refuses a connection to an address on this machine or its
+// network, as dial's Control: what a name resolved to, not the name.
+func publicOnly(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
 	}
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if !strings.Contains(host, ".") {
-		return true
+	if netutil.Local(host) {
+		return fmt.Errorf("%s is on this machine or its network, not a public address", host)
 	}
-	for _, suffix := range []string{".localhost", ".local", ".internal", ".lan", ".home.arpa"} {
-		if strings.HasSuffix(host, suffix) {
-			return true
-		}
-	}
-	return false
+	return nil
 }

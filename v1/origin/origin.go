@@ -4,6 +4,7 @@ package origin
 
 import (
 	"net"
+	"net/http"
 	"net/url"
 	"path"
 )
@@ -105,6 +106,14 @@ type Origin struct {
 	Ref string `json:"ref" jsonschema:"an exec origin's program path (never its arguments), an attach origin's container, an http origin's host and port"`
 	// Args is an exec origin's arguments, its ArgKey values, in order.
 	Args []string `json:"-"`
+	// Headers are set on every request forwarded to an http origin, in
+	// place of any a visitor sent under those names. Never encoded: they
+	// can be credentials.
+	Headers http.Header `json:"-"`
+	// Added is whether it joined while the run lasted rather than being
+	// settled at its start: it never counts toward the run's key, and it is
+	// dialed only at a public address.
+	Added bool `json:"-"`
 }
 
 // URL is the origin as settled, as a copy with credentials of its own:

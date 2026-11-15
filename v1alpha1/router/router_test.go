@@ -944,45 +944,113 @@ func TestRoutePreservesTheHost(t *testing.T) {
 	}
 }
 
-// TestLocal pins which origins are on this machine or its network, and so
-// keep the visitor's Host and an unverified certificate, and which are
-// remote.
-func TestLocal(t *testing.T) {
-	for host, want := range map[string]bool{
-		"localhost":            true,
-		"app.localhost":        true,
-		"127.0.0.1":            true,
-		"::1":                  true,
-		"0.0.0.0":              true,
-		"192.168.1.5":          true,
-		"10.0.0.7":             true,
-		"169.254.1.1":          true,
-		"fe80::1":              true,
-		"web":                  true,
-		"host.docker.internal": true,
-		"mac.local":            true,
-		"NAS.LAN.":             true,
-		"printer.home.arpa":    true,
-		"04d0ee3e-4160-73c5-0a32-3b4c4c06c50b.lambda-microvm.us-east-1.on.aws": false,
-		"example.com":  false,
-		"8.8.8.8":      false,
-		"2606:4700::1": false,
-	} {
-		if got := local(host); got != want {
-			t.Errorf("local(%q) = %v, want %v", host, got, want)
-		}
+// dialTo sends every origin dial to srv for the rest of the test, so an
+// origin can be named anything. It answers, for an address dialed, whether
+// that dial was to be public only, and whether it was dialed at all.
+func dialTo(t *testing.T, srv *httptest.Server) func(addr string) (public, dialed bool) {
+	t.Helper()
+	was := dial
+	var mu sync.Mutex
+	asked := map[string]bool{}
+	dial = func(ctx context.Context, network, addr string, public bool) (net.Conn, error) {
+		mu.Lock()
+		asked[addr] = public
+		mu.Unlock()
+		return was(ctx, network, srv.Listener.Addr().String(), false)
+	}
+	t.Cleanup(func() { dial = was })
+	return func(addr string) (bool, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		public, ok := asked[addr]
+		return public, ok
 	}
 }
 
-// dialTo sends every origin dial to srv for the rest of the test, so an
-// origin can be named anything.
-func dialTo(t *testing.T, srv *httptest.Server) {
-	t.Helper()
-	was := dial
-	dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return was(ctx, network, srv.Listener.Addr().String())
+// TestRouteAnAddedOrigin pins an origin appended while the run lasts: a run
+// with none answers 404 until one is added, then reaches it; a second one
+// added is reached at ?1 with its own headers in place of the visitor's,
+// and dialed public only, while the one the run started with is not.
+func TestRouteAnAddedOrigin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s|%s", r.Host, r.Header.Values("X-Api-Key"))
+	}))
+	t.Cleanup(srv.Close)
+	dialed := dialTo(t, srv)
+	list := origins.New()
+	r := New()
+	u, err := r.Route(t.Context(), WithOrigins(list), WithLog(discard))
+	if err != nil {
+		t.Fatalf("Route: %v", err)
 	}
-	t.Cleanup(func() { dial = was })
+	t.Cleanup(r.Cancel)
+	base := strings.TrimSuffix(u.String(), "/")
+	fetch := func(path string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, base+path, nil)
+		req.Host = "foo.tunneld.domain"
+		req.Header.Set("X-Api-Key", "the visitor's")
+		resp, body := get(t, http.DefaultClient, req)
+		return resp.StatusCode, body
+	}
+
+	if code, _ := fetch("/"); code != http.StatusNotFound {
+		t.Fatalf("GET / with no origins = %d, want 404", code)
+	}
+	web, _ := url.Parse("http://web:3000")
+	list.Add(origins.NewOrigin(web))
+	if code, body := fetch("/"); code != http.StatusOK || body != "foo.tunneld.domain|[the visitor's]" {
+		t.Fatalf("GET / once an origin is there = %d %q, want the origin, told what the visitor sent", code, body)
+	}
+
+	api, _ := url.Parse("http://api.example.com")
+	added := origins.NewOrigin(api)
+	added.Headers = http.Header{"X-Api-Key": {"the origin's"}}
+	if got := list.Append(added); got.Index != 1 || !got.Added {
+		t.Fatalf("Append = %+v, want index 1, added", got)
+	}
+	if code, body := fetch("/?1"); code != http.StatusOK || body != "api.example.com|[the origin's]" {
+		t.Errorf("GET /?1 = %d %q, want the added origin, its own Host and only its own X-Api-Key", code, body)
+	}
+	if code, body := fetch("/?0"); code != http.StatusOK || body != "foo.tunneld.domain|[the visitor's]" {
+		t.Errorf("GET /?0 = %d %q, want the first origin as before", code, body)
+	}
+	if public, ok := dialed("api.example.com:80"); !ok || !public {
+		t.Errorf("the added origin was dialed %v (public only %v), want public only", ok, public)
+	}
+	if public, ok := dialed("web:3000"); !ok || public {
+		t.Errorf("the run's own origin was dialed %v (public only %v), want any address", ok, public)
+	}
+}
+
+// TestPublicOnly pins the guard an added origin is dialed behind: an address
+// on this machine or its network is refused, whatever name led there, and a
+// public one is not; the dial itself applies it.
+func TestPublicOnly(t *testing.T) {
+	for addr, refused := range map[string]bool{
+		"127.0.0.1:80":       true,
+		"[::1]:80":           true,
+		"10.0.0.7:443":       true,
+		"169.254.169.254:80": true,
+		"100.100.100.100:53": true,
+		"8.8.8.8:443":        false,
+		"[2606:4700::1]:443": false,
+	} {
+		if err := publicOnly("tcp", addr, nil); (err != nil) != refused {
+			t.Errorf("publicOnly(%s) = %v, want refused %v", addr, err, refused)
+		}
+	}
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	if c, err := dial(t.Context(), "tcp", srv.Listener.Addr().String(), true); err == nil {
+		c.Close()
+		t.Error("dial public only reached a loopback listener")
+	}
+	c, err := dial(t.Context(), "tcp", srv.Listener.Addr().String(), false)
+	if err != nil {
+		t.Fatalf("dial to a loopback listener: %v", err)
+	}
+	c.Close()
 }
 
 // TestRouteARemoteOrigin pins what a remote origin is sent: its own Host,
@@ -1961,8 +2029,8 @@ func TestProxyHoldsTheScope(t *testing.T) {
 	listed.Serve(1, term)
 	lone := origins.New(origins.WithOrigins(execAt(0)))
 	lone.Serve(0, term)
-	both := proxy(listed, slog.New(slog.DiscardHandler))
-	alone := proxy(lone, slog.New(slog.DiscardHandler))
+	both := proxy(listed, http.NotFoundHandler(), slog.New(slog.DiscardHandler))
+	alone := proxy(lone, http.NotFoundHandler(), slog.New(slog.DiscardHandler))
 	for _, tc := range []struct {
 		h       http.Handler
 		target  string

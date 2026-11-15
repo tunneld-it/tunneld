@@ -211,3 +211,28 @@ func speaksHTTP(addr netip.AddrPort, userAgent string) bool {
 	}
 	return string(status) == "HTTP/"
 }
+
+// shared is the carrier-grade NAT range, a tailnet's addresses among them.
+var shared = netip.MustParsePrefix("100.64.0.0/10")
+
+// Local is whether host is on this machine or its network: a loopback,
+// unspecified, private, link-local or carrier-grade NAT address (a
+// tailnet's), a single-label name (a Compose service), or a name under a
+// suffix no public DNS serves. Anything else, a public name or address, is
+// remote.
+func Local(host string) bool {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		ip = ip.Unmap()
+		return ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || shared.Contains(ip)
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if !strings.Contains(host, ".") {
+		return true
+	}
+	for _, suffix := range []string{".localhost", ".local", ".internal", ".lan", ".home.arpa"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
+}
