@@ -278,26 +278,30 @@ func TestATerminalOverMcp(t *testing.T) {
 // TestOriginToolsWithoutAToken pins who reaches origin_add and origin_remove
 // without a token: a client on the server's own connection, as stdio is, and
 // one through the HTTP handler with no token, as a call over the tunnel with
-// its secret is, both get as far as the tool (not implemented yet).
+// its secret is, both get as far as the tool: origin_add adds the origin,
+// origin_remove is not implemented yet.
 func TestOriginToolsWithoutAToken(t *testing.T) {
 	m := New(WithOrigins(tooltest.Origins(t, "exec:///bin/sh")))
 	cs := connect(t, m)
-	for name, args := range map[string]map[string]any{
-		"origin_add":    {"origin": ":3000"},
-		"origin_remove": {"origin": "1"},
+	for name, tc := range map[string]struct {
+		args map[string]any
+		says string
+	}{
+		"origin_add":    {map[string]any{"origin": ":3000"}, `"ref":"localhost:3000"`},
+		"origin_remove": {map[string]any{"origin": "1"}, "origin_remove is not implemented yet"},
 	} {
-		r, err := cs.CallTool(t.Context(), &sdk.CallToolParams{Name: name, Arguments: args})
-		if err != nil || !r.IsError || r.Content[0].(*sdk.TextContent).Text != name+" is not implemented yet" {
-			t.Errorf("%s on the server's own connection = %+v, %v; want not implemented yet", name, r, err)
+		r, err := cs.CallTool(t.Context(), &sdk.CallToolParams{Name: name, Arguments: tc.args})
+		if err != nil || !strings.Contains(r.Content[0].(*sdk.TextContent).Text, tc.says) {
+			t.Errorf("%s on the server's own connection = %+v, %v; want %q", name, r, err, tc.says)
 		}
-		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": name, "arguments": args}})
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": name, "arguments": tc.args}})
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		rec := httptest.NewRecorder()
 		m.Handler().ServeHTTP(rec, req)
-		if !strings.Contains(rec.Body.String(), name+" is not implemented yet") {
-			t.Errorf("%s through the HTTP handler = %d %s; want not implemented yet", name, rec.Code, rec.Body)
+		if !strings.Contains(rec.Body.String(), tc.says) {
+			t.Errorf("%s through the HTTP handler = %d %s; want %q", name, rec.Code, rec.Body, tc.says)
 		}
 	}
 }

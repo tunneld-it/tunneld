@@ -6,11 +6,14 @@ package tool
 
 import (
 	"context"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
+	ltv1 "github.com/cnuss/libtunnel/v1"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	v1 "github.com/tunnel-pizza/tunneld/v1"
+	v1types "github.com/tunnel-pizza/tunneld/v1/types"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/attach"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/auth"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/cache"
@@ -155,4 +158,33 @@ func Capped(text string) (string, bool) {
 func (c Context) Logged(ctx context.Context, tool, ended string, start time.Time) {
 	access, _ := auth.AccessOf(ctx)
 	c.Log.Info("mcp: call", "tool", tool, "sub", access.Sub, "actor", access.Actor, "ended", ended, "took", time.Since(start).Round(time.Millisecond))
+}
+
+// Address is origin i's public address on tunnel, a run of n origins: the
+// bare address when there is one, ?i when there are more, as the run prints
+// them. Empty while the tunnel is not known.
+func Address(tunnel string, i, n int) string {
+	if tunnel == "" {
+		return ""
+	}
+	if n <= 1 {
+		return "https://" + tunnel + "/"
+	}
+	return "https://" + tunnel + "/?" + strconv.Itoa(i)
+}
+
+// Machine is the run's own process as its .env holds it, read from the
+// cache rather than worked out again; nothing without a cache.
+func (c Context) Machine() v1types.Machine {
+	if c.Cache == nil {
+		return v1types.Machine{}
+	}
+	pid, _ := strconv.Atoi(c.Cache.Get("PID"))
+	return v1types.Machine{
+		Tunnel:   c.Cache.Get(ltv1.HostnameEnv),
+		Hostname: c.Cache.Get("HOSTNAME"),
+		Username: c.Cache.Get("USERNAME"),
+		PID:      pid,
+		PWD:      c.Cache.Get("PWD"),
+	}
 }

@@ -12,8 +12,10 @@ import (
 	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	v1types "github.com/tunnel-pizza/tunneld/v1/types"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/attach"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/auth"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/cache"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/origins"
 )
 
@@ -213,5 +215,34 @@ func TestChangesOrigins(t *testing.T) {
 				t.Errorf("ChangesOrigins = %v, log %q; want a logged refusal saying %q", err, got(), tc.says)
 			}
 		})
+	}
+}
+
+// TestMachineWithoutACache pins a server with no cache, or one that holds no
+// tracking yet: the machine says nothing rather than guessing.
+func TestMachineWithoutACache(t *testing.T) {
+	if got := (Context{}).Machine(); got != (v1types.Machine{}) {
+		t.Errorf("Machine() = %+v, want nothing", got)
+	}
+	if got := (Context{Cache: cache.None{}}).Machine(); got != (v1types.Machine{}) {
+		t.Errorf("Machine() from None = %+v, want nothing", got)
+	}
+}
+
+// TestAddress pins an origin's public address: the bare address for a run of
+// one origin, ?n for a run of more, nothing while the tunnel is unknown.
+func TestAddress(t *testing.T) {
+	for _, tc := range []struct {
+		tunnel string
+		i, n   int
+		want   string
+	}{
+		{"0tabc.tunneld.domain", 0, 1, "https://0tabc.tunneld.domain/"},
+		{"0tabc.tunneld.domain", 2, 3, "https://0tabc.tunneld.domain/?2"},
+		{"", 1, 2, ""},
+	} {
+		if got := Address(tc.tunnel, tc.i, tc.n); got != tc.want {
+			t.Errorf("Address(%q, %d, %d) = %q, want %q", tc.tunnel, tc.i, tc.n, got, tc.want)
+		}
 	}
 }

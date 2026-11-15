@@ -126,6 +126,31 @@ func Unowned(tool string) error {
 		fmt.Errorf("%s can't change a tunnel nobody owns", tool))
 }
 
+// Fixed is the refusal for tool on a run whose origins cannot change: one
+// given none to change.
+func Fixed(tool string) error {
+	return refusal("", fmt.Errorf("This run's origins are fixed: %s can't change them", tool))
+}
+
+// NotAnOrigin is the refusal for word, which reads as no origin at all.
+func NotAnOrigin(word string) error {
+	return refusal("origin is a web address, such as https://api.example.com",
+		fmt.Errorf("%q is not an origin", word))
+}
+
+// NotYetServed is the refusal for origin, a program or a container, which
+// origin_add does not start yet.
+func NotYetServed(origin v1.Origin) error {
+	return refusal("origin_add adds a web address for now; a program or a container is one tunneld is started with",
+		fmt.Errorf("origin_add can't start %s yet: it is %s", origin.Label(), origin.Scheme))
+}
+
+// BadHeader is the refusal for header name, err saying why.
+func BadHeader(name string, err error) error {
+	return refusal("headers are names and values a request could carry; Host and the headers a connection is managed by are tunneld's to set",
+		fmt.Errorf("header %q: %w", name, err))
+}
+
 // UnknownScheme is the refusal for scheme, which no origin can have.
 func UnknownScheme(scheme v1.Scheme) error {
 	return refusal("scheme must be exec, attach or http", fmt.Errorf("%q is not a scheme", scheme))

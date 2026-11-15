@@ -145,6 +145,7 @@ type Origins interface {
     Key() string
     WebSocket() (int, bool)          // the +ws origin's index, if one is marked
     Dialable() []*url.URL            // where each origin is dialed, in order
+    Append(origin Origin) Origin     // added while the run lasts, at the next index, never in Key
 }
 
 // Origin is one origin, worked out once from the URL it was settled as.

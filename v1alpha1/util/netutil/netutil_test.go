@@ -176,3 +176,35 @@ func listen(t *testing.T, serve func(net.Conn)) string {
 	}()
 	return l.Addr().String()
 }
+
+// TestLocal pins which origins are on this machine or its network, and so
+// keep the visitor's Host and an unverified certificate, and which are
+// remote.
+func TestLocal(t *testing.T) {
+	for host, want := range map[string]bool{
+		"localhost":            true,
+		"app.localhost":        true,
+		"127.0.0.1":            true,
+		"::1":                  true,
+		"0.0.0.0":              true,
+		"192.168.1.5":          true,
+		"10.0.0.7":             true,
+		"169.254.1.1":          true,
+		"fe80::1":              true,
+		"100.101.102.103":      true,
+		"::ffff:127.0.0.1":     true,
+		"web":                  true,
+		"host.docker.internal": true,
+		"mac.local":            true,
+		"NAS.LAN.":             true,
+		"printer.home.arpa":    true,
+		"04d0ee3e-4160-73c5-0a32-3b4c4c06c50b.lambda-microvm.us-east-1.on.aws": false,
+		"example.com":  false,
+		"8.8.8.8":      false,
+		"2606:4700::1": false,
+	} {
+		if got := Local(host); got != want {
+			t.Errorf("Local(%q) = %v, want %v", host, got, want)
+		}
+	}
+}

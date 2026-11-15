@@ -4,10 +4,8 @@ package sessions
 
 import (
 	"context"
-	"strconv"
 	"time"
 
-	ltv1 "github.com/cnuss/libtunnel/v1"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	v1 "github.com/tunnel-pizza/tunneld/v1"
 	v1types "github.com/tunnel-pizza/tunneld/v1/types"
@@ -49,43 +47,14 @@ func run() tool.RunFunc[In, types.Sessions] {
 		// Listing needs no scope beyond what let the call in: acting on an
 		// origin is what a tool asks a scope for. Each by its index among all
 		// the origins, which is what ?n and the other tools name it by.
-		out := types.Sessions{Machine: machine(c), Sessions: []v1types.Session{}}
+		out := types.Sessions{Machine: c.Machine(), Sessions: []v1types.Session{}}
 		all := c.All()
 		for _, o := range all {
 			if o.Scheme == in.Scheme {
-				out.Sessions = append(out.Sessions, v1types.Session{Origin: o, Address: address(out.Machine.Tunnel, o.Index, len(all))})
+				out.Sessions = append(out.Sessions, v1types.Session{Origin: o, Address: tool.Address(out.Machine.Tunnel, o.Index, len(all))})
 			}
 		}
 		c.Logged(ctx, "terminal_sessions", "ok", start)
 		return nil, out, nil
-	}
-}
-
-// address is origin i's public address on tunnel, a run of n origins: the
-// bare address when there is one, ?i when there are more, as the run prints
-// them. Empty while the tunnel is not known.
-func address(tunnel string, i, n int) string {
-	if tunnel == "" {
-		return ""
-	}
-	if n <= 1 {
-		return "https://" + tunnel + "/"
-	}
-	return "https://" + tunnel + "/?" + strconv.Itoa(i)
-}
-
-// machine is the run's own process as its .env holds it, read from the
-// cache rather than worked out again; nothing without a cache.
-func machine(c tool.Context) v1types.Machine {
-	if c.Cache == nil {
-		return v1types.Machine{}
-	}
-	pid, _ := strconv.Atoi(c.Cache.Get("PID"))
-	return v1types.Machine{
-		Tunnel:   c.Cache.Get(ltv1.HostnameEnv),
-		Hostname: c.Cache.Get("HOSTNAME"),
-		Username: c.Cache.Get("USERNAME"),
-		PID:      pid,
-		PWD:      c.Cache.Get("PWD"),
 	}
 }

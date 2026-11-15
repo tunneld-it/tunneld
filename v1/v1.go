@@ -448,6 +448,10 @@ type Origins interface {
 	// the loopback address tunneld serves it at, for a program or a
 	// container, else its URI. Each a copy.
 	Dialable() []*url.URL
+	// Append adds origin while the run lasts, numbered next and marked
+	// Added, and answers it as added. Indexes only grow: none moves and none
+	// is reused.
+	Append(origin Origin) Origin
 }
 
 // Origin, Scheme and Provider are the origin package's, aliased so a caller

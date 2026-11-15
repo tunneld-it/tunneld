@@ -65,6 +65,10 @@ func TestSays(t *testing.T) {
 		"Unsendable":     {Unsendable(fmt.Errorf("%w %q: step 2", attach.ErrUnknownKey, "Hyper")), []string{`attach: unknown key "Hyper": step 2`, "each step is exactly one of text or key"}},
 		"Undiscoverable": {Undiscoverable("terminal_sessions"), []string{"terminal_sessions does not list a tunnel nobody owns", "Act on a terminal you were given the address of: terminal_exec, terminal_read, terminal_wait or terminal_screen with https://hostname/, or https://hostname/?n for origin n"}},
 		"Unowned":        {Unowned("origin_add"), []string{"origin_add can't change a tunnel nobody owns", "Only the client that started its tunneld, over stdio, or the tunnel's secret can"}},
+		"Fixed":          {Fixed("origin_add"), []string{"This run's origins are fixed: origin_add can't change them"}},
+		"NotAnOrigin":    {NotAnOrigin(""), []string{`"" is not an origin`, "origin is a web address, such as https://api.example.com"}},
+		"NotYetServed":   {NotYetServed(v1.Origin{URI: url.URL{Scheme: "exec", Path: "/bin/sh"}, Scheme: v1.ExecScheme}), []string{"origin_add can't start exec:///bin/sh yet: it is exec", "origin_add adds a web address for now; a program or a container is one tunneld is started with"}},
+		"BadHeader":      {BadHeader("Host", fmt.Errorf("tunneld sets it")), []string{`header "Host": tunneld sets it`, "headers are names and values a request could carry; Host and the headers a connection is managed by are tunneld's to set"}},
 		"UnknownScheme":  {UnknownScheme("ssh"), []string{`"ssh" is not a scheme`, "scheme must be exec, attach or http"}},
 	} {
 		if got := texts(t, tc.err); !slices.Equal(got, tc.says) {

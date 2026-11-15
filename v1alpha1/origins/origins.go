@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	v1 "github.com/tunnel-pizza/tunneld/v1"
@@ -40,10 +41,11 @@ var sessionEnv = []string{
 type Option = v1.Option[*OriginsImpl]
 
 // OriginsImpl is the default Origins: a list, the directory it was settled
-// in, and where each served origin is dialed. The list and the directory are
-// fixed once New returns, but for what Add appends; Serve records an address
-// after, and is not safe to call while the list is read.
+// in, and where each served origin is dialed. The directory is fixed once
+// New returns; the list grows by Add while it is settled and by Append while
+// the run lasts, and never shrinks. Safe for concurrent use.
 type OriginsImpl struct {
+	mu sync.RWMutex
 	// dir is the working directory this run's identity is scoped to, so two
 	// projects serving :3000 are two tunnels rather than one.
 	dir     string
@@ -121,6 +123,8 @@ func WithDir(dir string) Option {
 // list assembled from more than one source keeps every Index its ?n. A repeat
 // costs nothing: Key deduplicates.
 func (o *OriginsImpl) Add(origins ...v1.Origin) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	for _, origin := range origins {
 		origin = clone(origin)
 		origin.Index = len(o.origins)
@@ -128,17 +132,37 @@ func (o *OriginsImpl) Add(origins ...v1.Origin) {
 	}
 }
 
+// Append implements v1.Origins.
+func (o *OriginsImpl) Append(origin v1.Origin) v1.Origin {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	origin = clone(origin)
+	origin.Index, origin.Added = len(o.origins), true
+	o.origins = append(o.origins, origin)
+	return clone(origin)
+}
+
 // Len implements v1.Origins.
-func (o *OriginsImpl) Len() int { return len(o.origins) }
+func (o *OriginsImpl) Len() int {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return len(o.origins)
+}
 
 // At implements v1.Origins, as a copy. The caller has already bounded i by
 // Len, so an index outside it panics the way a slice does.
-func (o *OriginsImpl) At(i int) v1.Origin { return clone(o.origins[i]) }
+func (o *OriginsImpl) At(i int) v1.Origin {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return clone(o.origins[i])
+}
 
 // All implements v1.Origins, as a copy: Key sorts, and a caller that sorted
 // or changed what it was handed would change the run's routing as a side
 // effect of asking what it is.
 func (o *OriginsImpl) All() []v1.Origin {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	out := make([]v1.Origin, len(o.origins))
 	for i, origin := range o.origins {
 		out[i] = clone(origin)
@@ -152,6 +176,8 @@ func (o *OriginsImpl) From(raw string) (v1.Origin, error) {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return v1.Origin{}, fmt.Errorf("%w: %q is not an address on the tunnel", v1.ErrInvalidOrigin, raw)
 	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	// The router's rule: a segment Atoi accepts is a bare numeric parameter;
 	// a valued one ("1=x") carries '=' and is the application's own.
 	index := 0
@@ -167,10 +193,13 @@ func (o *OriginsImpl) From(raw string) (v1.Origin, error) {
 	return clone(o.origins[index]), nil
 }
 
-// clone is origin with nothing shared: its Args and its URI's credentials are
-// its own.
+// clone is origin with nothing shared: its Args, its Headers and its URI's
+// credentials are its own.
 func clone(origin v1.Origin) v1.Origin {
 	origin.Args = slices.Clone(origin.Args)
+	if origin.Headers != nil {
+		origin.Headers = origin.Headers.Clone()
+	}
 	origin.URI = *origin.URL()
 	return origin
 }
@@ -180,6 +209,8 @@ func clone(origin v1.Origin) v1.Origin {
 // keeps it here, and every URL the list hands out is the bare address it
 // dials. An index outside the list names none.
 func (o *OriginsImpl) WebSocket() (int, bool) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	if o.ws < 0 || o.ws >= len(o.origins) {
 		return -1, false
 	}
@@ -191,6 +222,8 @@ func (o *OriginsImpl) WebSocket() (int, bool) {
 // operator typed, a program or a container, and only where it is dialed is
 // new. An i outside the list, or a nil at, is ignored.
 func (o *OriginsImpl) Serve(i int, at *url.URL) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	if i < 0 || i >= len(o.origins) || at == nil {
 		return
 	}
@@ -202,6 +235,8 @@ func (o *OriginsImpl) Serve(i int, at *url.URL) {
 
 // Dialable implements v1.Origins.
 func (o *OriginsImpl) Dialable() []*url.URL {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	out := make([]*url.URL, len(o.origins))
 	for i, origin := range o.origins {
 		if at, ok := o.served[i]; ok {
@@ -229,10 +264,17 @@ func (o *OriginsImpl) Dialable() []*url.URL {
 // connectors on one tunnel when run together, a link that changes what it
 // opens when run apart. The arguments ride the origin as a query, in order,
 // so the whole URL is the whole invocation.
+//
+// An origin Append added does not count: the run is the tunnel it started
+// as, whatever joins it.
 func (o *OriginsImpl) Key() string {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	parts := make([]string, 0, len(o.origins))
 	for _, origin := range o.origins {
-		parts = append(parts, origin.URL().String())
+		if !origin.Added {
+			parts = append(parts, origin.URL().String())
+		}
 	}
 	slices.Sort(parts)
 	parts = slices.Compact(parts)
