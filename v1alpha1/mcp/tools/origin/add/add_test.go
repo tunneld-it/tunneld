@@ -49,25 +49,31 @@ func TestOriginAddListing(t *testing.T) {
 
 // TestOriginAddGate pins who may call it over the tunnel: a token without
 // tunnel:origins is refused, saying why; the secret and a token with the
-// scope get as far as reading the origin.
+// scope add the origin.
 func TestOriginAddGate(t *testing.T) {
 	c := tool.Context{Origins: tooltest.Origins(t, "exec:///bin/sh"), Log: slog.New(slog.DiscardHandler)}
 	for name, tc := range map[string]struct {
 		access *auth.Access
 		says   string
 	}{
-		"the tunnel's secret":         {nil, "http://localhost:3000 is on this machine or its network"},
+		"the tunnel's secret":         {nil, ""},
 		"a token without the scope":   {&auth.Access{Sub: "github:1", Scopes: []string{"mcp", "tunnel:exec"}}, "origin_add needs the tunnel:origins scope"},
-		"a token with tunnel:origins": {&auth.Access{Sub: "github:1", Scopes: []string{"mcp", "tunnel:origins"}}, "http://localhost:3000 is on this machine or its network"},
+		"a token with tunnel:origins": {&auth.Access{Sub: "github:1", Scopes: []string{"mcp", "tunnel:origins"}}, ""},
 	} {
 		status, body := tooltest.Call(t, Tool, c, tc.access, `{"origin":":3000"}`)
+		if tc.says == "" {
+			if status != 200 || strings.Contains(body, `"isError":true`) || !strings.Contains(body, `"ref":"localhost:3000"`) {
+				t.Errorf("origin_add over the tunnel, %s = %d %s, want localhost:3000 added", name, status, body)
+			}
+			continue
+		}
 		if status != 200 || !strings.Contains(body, tc.says) || !strings.Contains(body, `"isError":true`) {
 			t.Errorf("origin_add over the tunnel, %s = %d %s, want a tool error saying %q", name, status, body, tc.says)
 		}
 	}
 }
 
-// TestOriginAdd pins an add: a web address on a public name joins the run
+// TestOriginAdd pins an add: a web address joins the run
 // at the next index, marked added, with the headers given, canonical, and
 // answers its session and address, the headers never in the answer.
 func TestOriginAdd(t *testing.T) {
@@ -98,12 +104,17 @@ func TestOriginAdd(t *testing.T) {
 	if answer, _ := json.Marshal(out); strings.Contains(string(answer), "the token") {
 		t.Errorf("answer %s carries a header's value", answer)
 	}
+	for i, word := range []string{":4000", "http://web:3000", "http://10.0.0.5:8080"} {
+		_, out, _ := run()(c, t.Context(), &sdk.CallToolRequest{}, In{Origin: word})
+		if out.Session.Index != 2+i || !list.At(2+i).Added {
+			t.Errorf("origin_add(%q) = %+v, want it added at %d like any other", word, out.Session, 2+i)
+		}
+	}
 }
 
 // TestOriginAddRefuses pins what it will not add, each saying why, with the
-// run left as it was: something that is no origin, a program, an address on
-// this machine or its network, and a header a request cannot carry or that
-// tunneld sets.
+// run left as it was: something that is no origin, a program or a
+// container, and a header a request cannot carry or that tunneld sets.
 func TestOriginAddRefuses(t *testing.T) {
 	for name, tc := range map[string]struct {
 		in   In
@@ -111,10 +122,7 @@ func TestOriginAddRefuses(t *testing.T) {
 	}{
 		"nothing":            {In{Origin: ""}, `"" is not an origin`},
 		"a program":          {In{Origin: "exec:///bin/sh"}, "origin_add can't start exec:///bin/sh yet"},
-		"localhost":          {In{Origin: ":3000"}, "http://localhost:3000 is on this machine or its network"},
-		"a private address":  {In{Origin: "http://10.0.0.5:8080"}, "http://10.0.0.5:8080 is on this machine or its network"},
-		"a Compose service":  {In{Origin: "http://web:3000"}, "http://web:3000 is on this machine or its network"},
-		"the metadata host":  {In{Origin: "http://169.254.169.254"}, "http://169.254.169.254 is on this machine or its network"},
+		"a container":        {In{Origin: "attach://dockerd/web"}, "origin_add can't start attach://dockerd/web yet"},
 		"Host":               {In{Origin: "https://api.example.com", Headers: map[string]string{"host": "evil.example"}}, `header "host": tunneld sets it`},
 		"not a header name":  {In{Origin: "https://api.example.com", Headers: map[string]string{"x api": "k"}}, `header "x api": not a header name`},
 		"a line break value": {In{Origin: "https://api.example.com", Headers: map[string]string{"X-Api": "k\r\nX-Evil: 1"}}, `header "X-Api": its value is not one a header can carry`},

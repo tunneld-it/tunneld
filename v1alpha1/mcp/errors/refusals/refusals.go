@@ -141,15 +141,8 @@ func NotAnOrigin(word string) error {
 // NotYetServed is the refusal for origin, a program or a container, which
 // origin_add does not start yet.
 func NotYetServed(origin v1.Origin) error {
-	return refusal("origin_add adds a web address on a public name for now; a program or a container is one tunneld is started with",
+	return refusal("origin_add adds a web address for now; a program or a container is one tunneld is started with",
 		fmt.Errorf("origin_add can't start %s yet: it is %s", origin.Label(), origin.Scheme))
-}
-
-// NotRemote is the refusal for origin, an address on this machine or its
-// network, which origin_add would open to the tunnel's visitors.
-func NotRemote(origin v1.Origin) error {
-	return refusal("origin_add adds a web address on a public name or address; one on this machine or its network is one tunneld is started with",
-		fmt.Errorf("%s is on this machine or its network", origin.Label()))
 }
 
 // BadHeader is the refusal for header name, err saying why.

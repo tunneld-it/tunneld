@@ -970,7 +970,8 @@ func dialTo(t *testing.T, srv *httptest.Server) func(addr string) (public, diale
 // TestRouteAnAddedOrigin pins an origin appended while the run lasts: a run
 // with none answers 404 until one is added, then reaches it; a second one
 // added is reached at ?1 with its own headers in place of the visitor's,
-// and dialed public only, while the one the run started with is not.
+// and, on a public name, dialed public only, while the one the run started
+// with and one added on a local name are not.
 func TestRouteAnAddedOrigin(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s|%s", r.Host, r.Header.Values("X-Api-Key"))
@@ -1020,6 +1021,14 @@ func TestRouteAnAddedOrigin(t *testing.T) {
 	}
 	if public, ok := dialed("web:3000"); !ok || public {
 		t.Errorf("the run's own origin was dialed %v (public only %v), want any address", ok, public)
+	}
+	db, _ := url.Parse("http://db:5000")
+	list.Append(origins.NewOrigin(db))
+	if code, _ := fetch("/?2"); code != http.StatusOK {
+		t.Errorf("GET /?2 = %d, want the origin added on a local name", code)
+	}
+	if public, ok := dialed("db:5000"); !ok || public {
+		t.Errorf("the origin added on a local name was dialed %v (public only %v), want any address", ok, public)
 	}
 }
 

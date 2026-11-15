@@ -111,8 +111,8 @@ type Origin struct {
 	// can be credentials.
 	Headers http.Header `json:"-"`
 	// Added is whether it joined while the run lasted rather than being
-	// settled at its start: it never counts toward the run's key, and it is
-	// dialed only at a public address.
+	// settled at its start: it never counts toward the run's key, and on a
+	// public name it is dialed only at a public address.
 	Added bool `json:"-"`
 }
 

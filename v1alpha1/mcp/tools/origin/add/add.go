@@ -16,7 +16,6 @@ import (
 	"github.com/tunnel-pizza/tunneld/v1alpha1/mcp/tool"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/mcp/types"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/origins"
-	"github.com/tunnel-pizza/tunneld/v1alpha1/util/netutil"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -24,14 +23,14 @@ import (
 var Tool = tool.New(sdk.Tool{
 	Name:        "origin_add",
 	Title:       "Add an origin",
-	Description: "Adds a web address on a public name or address to this machine's tunnel, such as https://api.example.com, reached at the next ?n with any headers given set on every request it is forwarded. Answers the machine and the new origin's session, its address among them. Programs, containers and addresses on this machine or its network are the ones tunneld is started with. Only the client that started this tunneld, over stdio, the tunnel's secret, or a sign-in holding tunnel:origins, may call it.",
+	Description: "Adds a web address to this machine's tunnel, such as :3000 or https://api.example.com, reached at the next ?n with any headers given set on every request it is forwarded. Answers the machine and the new origin's session, its address among them. Programs and containers are not added yet. Only the client that started this tunneld, over stdio, the tunnel's secret, or a sign-in holding tunnel:origins, may call it.",
 	// Adds an address the tunnel forwards to, and takes nothing away.
 	Annotations: &sdk.ToolAnnotations{DestructiveHint: new(false), OpenWorldHint: new(true)},
 }, run())
 
 // In is what origin_add takes.
 type In struct {
-	Origin  string            `json:"origin" jsonschema:"the origin, a web address on a public name or address: https://api.example.com, or api.example.com:8443 for http"`
+	Origin  string            `json:"origin" jsonschema:"the origin, a web address as tunneld's command line takes one: a port (:3000), or a URL (http://localhost:3000, https://api.example.com)"`
 	Headers map[string]string `json:"headers,omitempty" jsonschema:"request headers set on every request the tunnel forwards to this origin, by name, replacing any a visitor sent under that name: credentials a remote endpoint wants, such as X-Api-Key. Optional"`
 }
 
@@ -42,7 +41,7 @@ var managed = map[string]bool{
 	"Transfer-Encoding": true, "Upgrade": true, "Te": true, "Trailer": true, "Content-Length": true,
 }
 
-// run adds a web address on a public name to the run's origins.
+// run adds a web address to the run's origins.
 func run() tool.RunFunc[In, types.Origin] {
 	return func(c tool.Context, ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, types.Origin, error) {
 		start := time.Now()
@@ -61,11 +60,10 @@ func run() tool.RunFunc[In, types.Origin] {
 			return refuse(refusals.NotAnOrigin(in.Origin))
 		}
 		origin := parsed[0]
+		// Nothing stands a program or a container up once the run has
+		// started, so only an address the router dials can be added.
 		if origin.Scheme != v1.HttpScheme {
 			return refuse(refusals.NotYetServed(origin))
-		}
-		if netutil.Local(origin.URI.Hostname()) {
-			return refuse(refusals.NotRemote(origin))
 		}
 		if len(in.Headers) > 0 {
 			origin.Headers = http.Header{}

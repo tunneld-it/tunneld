@@ -1021,10 +1021,10 @@ func proxy(origins v1.Origins, empty http.Handler, log *slog.Logger) http.Handle
 			for name, values := range all[to.ix].Headers {
 				r.Out.Header[name] = slices.Clone(values)
 			}
-			// An origin added while the run lasts is dialed only at a public
-			// address: a name that resolves onto this machine or its network
-			// would reach what nobody added.
-			if all[to.ix].Added {
+			// An origin added on a public name while the run lasts is dialed
+			// only at a public address: a name that resolves onto this
+			// machine or its network would reach what nobody added.
+			if all[to.ix].Added && !local {
 				r.Out = r.Out.WithContext(context.WithValue(r.Out.Context(), publicKey{}, true))
 			}
 		},
