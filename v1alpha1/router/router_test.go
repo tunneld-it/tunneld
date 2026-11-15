@@ -944,6 +944,105 @@ func TestRoutePreservesTheHost(t *testing.T) {
 	}
 }
 
+// TestLocal pins which origins are on this machine or its network, and so
+// keep the visitor's Host and an unverified certificate, and which are
+// remote.
+func TestLocal(t *testing.T) {
+	for host, want := range map[string]bool{
+		"localhost":            true,
+		"app.localhost":        true,
+		"127.0.0.1":            true,
+		"::1":                  true,
+		"0.0.0.0":              true,
+		"192.168.1.5":          true,
+		"10.0.0.7":             true,
+		"169.254.1.1":          true,
+		"fe80::1":              true,
+		"web":                  true,
+		"host.docker.internal": true,
+		"mac.local":            true,
+		"NAS.LAN.":             true,
+		"printer.home.arpa":    true,
+		"04d0ee3e-4160-73c5-0a32-3b4c4c06c50b.lambda-microvm.us-east-1.on.aws": false,
+		"example.com":  false,
+		"8.8.8.8":      false,
+		"2606:4700::1": false,
+	} {
+		if got := local(host); got != want {
+			t.Errorf("local(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// dialTo sends every origin dial to srv for the rest of the test, so an
+// origin can be named anything.
+func dialTo(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	was := dial
+	dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return was(ctx, network, srv.Listener.Addr().String())
+	}
+	t.Cleanup(func() { dial = was })
+}
+
+// TestRouteARemoteOrigin pins what a remote origin is sent: its own Host,
+// since it answers that name only, and the tunnel's in X-Forwarded-Host with
+// X-Forwarded-Proto https when the edge sent neither, as it does not. A
+// forwarding header that did arrive is kept. A local one, a Compose service
+// by name, still sees the visitor's Host and is told nothing invented.
+func TestRouteARemoteOrigin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s|%s|%s", r.Host, r.Header.Get("X-Forwarded-Host"), r.Header.Get("X-Forwarded-Proto"))
+	}))
+	t.Cleanup(srv.Close)
+	dialTo(t, srv)
+	for name, tc := range map[string]struct {
+		origin string
+		sent   map[string]string
+		want   string
+	}{
+		"remote":                 {"http://api.example.com", nil, "api.example.com|foo.tunneld.domain|https"},
+		"remote, forwarded host": {"http://api.example.com", map[string]string{"X-Forwarded-Host": "edge.example", "X-Forwarded-Proto": "http"}, "api.example.com|edge.example|http"},
+		"a Compose service":      {"http://web:3000", nil, "foo.tunneld.domain||"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			u, _ := url.Parse(tc.origin)
+			base := route(t, origins.New(origins.WithOrigins(origins.NewOrigin(u))), -1, nil, discard)
+			req, _ := http.NewRequest(http.MethodGet, base+"/", nil)
+			req.Host = "foo.tunneld.domain"
+			for h, v := range tc.sent {
+				req.Header.Set(h, v)
+			}
+			if _, body := get(t, http.DefaultClient, req); body != tc.want {
+				t.Errorf("origin saw %q, want %q (Host|X-Forwarded-Host|X-Forwarded-Proto)", body, tc.want)
+			}
+		})
+	}
+}
+
+// TestRouteVerifiesARemoteCertificate pins TLS to an https origin: a local
+// one is reached whatever its certificate says, a remote one only with a
+// certificate any client would trust, since what it is sent may be a
+// credential.
+func TestRouteVerifiesARemoteCertificate(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "tls")
+	}))
+	t.Cleanup(srv.Close)
+	dialTo(t, srv)
+	for origin, want := range map[string]int{
+		"https://web:443":         http.StatusOK,
+		"https://example.com:443": http.StatusBadGateway,
+	} {
+		u, _ := url.Parse(origin)
+		base := route(t, origins.New(origins.WithOrigins(origins.NewOrigin(u))), -1, nil, discard)
+		req, _ := http.NewRequest(http.MethodGet, base+"/", nil)
+		if resp, _ := get(t, http.DefaultClient, req); resp.StatusCode != want {
+			t.Errorf("%s with a self-signed certificate = %d, want %d", origin, resp.StatusCode, want)
+		}
+	}
+}
+
 // TestRouteDialsHTTPSUnverified pins that an https origin is reached however
 // its certificate reads: an origin on this machine presents whatever its dev
 // server made up.

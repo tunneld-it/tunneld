@@ -24,7 +24,8 @@ var Tool = tool.New(sdk.Tool{
 
 // In is what origin_add takes.
 type In struct {
-	Origin string `json:"origin" jsonschema:"the origin, as tunneld's command line takes one: a port (:3000), a program on this machine (sh), or a URL (http://localhost:3000, exec:///bin/bash, attach://dockerd/web)"`
+	Origin  string            `json:"origin" jsonschema:"the origin, as tunneld's command line takes one: a port (:3000), a program on this machine (sh), or a URL (http://localhost:3000, exec:///bin/bash, attach://dockerd/web)"`
+	Headers map[string]string `json:"headers,omitempty" jsonschema:"request headers set on every request the tunnel forwards to this origin, by name, replacing any a visitor sent under that name: credentials a remote endpoint wants, such as X-Api-Key. Optional"`
 }
 
 // run refuses: adding an origin to a running tunnel is not implemented yet.

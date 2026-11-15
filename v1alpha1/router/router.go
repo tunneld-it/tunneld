@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	_ "embed"
 	"encoding/base64"
 	"errors"
@@ -30,6 +31,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
@@ -966,7 +968,14 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 			// Scheme and host only: an origin typed with a path is reached at
 			// its root, the way the tunnel engine reached it.
 			r.SetURL(&url.URL{Scheme: origin.Scheme, Host: origin.Host})
-			r.Out.Host = r.In.Host
+			// A local origin sees the Host the request arrived with: it may
+			// key on it. A remote one, on a public name, answers that name
+			// only, so it gets it, and is told the tunnel's in
+			// X-Forwarded-Host below.
+			local := local(origin.Hostname())
+			if local {
+				r.Out.Host = r.In.Host
+			}
 			// The forwarding headers, as they arrived. With Rewrite set the
 			// stdlib strips them from the outbound request, and an origin that
 			// builds absolute URLs from X-Forwarded-Proto then falls back to
@@ -979,6 +988,17 @@ func proxy(origins v1.Origins, log *slog.Logger) http.Handler {
 			for _, h := range forwarding {
 				if v, ok := r.In.Header[h]; ok {
 					r.Out.Header[h] = v
+				}
+			}
+			// The edge sends no X-Forwarded-Host, and a remote origin was
+			// sent its own Host, so it would have no other way to learn the
+			// tunnel's. Every tunnel address is https.
+			if !local {
+				if r.Out.Header.Get("X-Forwarded-Host") == "" {
+					r.Out.Header.Set("X-Forwarded-Host", r.In.Host)
+				}
+				if r.Out.Header.Get("X-Forwarded-Proto") == "" {
+					r.Out.Header.Set("X-Forwarded-Proto", "https")
 				}
 			}
 		},
@@ -1254,9 +1274,9 @@ var forwarding = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X
 // on the outbound request context.
 type stickyKey struct{}
 
-// transport dials the origins, adding TLS without verification when any
-// origin is https — an origin on this machine presents whatever certificate
-// its dev server made up, and the tunnel engine never verified one either.
+// transport dials the origins, adding TLS when any origin is https: without
+// verification for one on this machine, which presents whatever certificate
+// its dev server made up, and verified as any client would for a remote one.
 // The TLS config only engages on https dials, so http origins share it.
 //
 // A clone of the default rather than a bare Transport, which would have no
@@ -1264,12 +1284,50 @@ type stickyKey struct{}
 // server that hangs on accept would then hold requests to every origin behind
 // this router.
 func transport(origins []*url.URL) http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = dial
 	for _, u := range origins {
 		if u.Scheme == "https" {
-			t := http.DefaultTransport.(*http.Transport).Clone()
-			t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-			return t
+			t.TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true,
+				// What the tunnel sends a remote origin may be a credential.
+				VerifyConnection: func(cs tls.ConnectionState) error {
+					if local(cs.ServerName) {
+						return nil
+					}
+					opts := x509.VerifyOptions{DNSName: cs.ServerName, Intermediates: x509.NewCertPool()}
+					for _, c := range cs.PeerCertificates[1:] {
+						opts.Intermediates.AddCert(c)
+					}
+					_, err := cs.PeerCertificates[0].Verify(opts)
+					return err
+				},
+			}
+			break
 		}
 	}
-	return http.DefaultTransport
+	return t
+}
+
+// dial is how transport reaches an origin's address.
+var dial = http.DefaultTransport.(*http.Transport).DialContext
+
+// local is whether host is on this machine or its network: a loopback,
+// unspecified, private or link-local address, a single-label name (a
+// Compose service), or a name under a suffix no public DNS serves. Anything
+// else, a public name or address, is remote.
+func local(host string) bool {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if !strings.Contains(host, ".") {
+		return true
+	}
+	for _, suffix := range []string{".localhost", ".local", ".internal", ".lan", ".home.arpa"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }

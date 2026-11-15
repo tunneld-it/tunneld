@@ -1,7 +1,9 @@
 package add
 
 import (
+	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +22,25 @@ func TestOriginAddListing(t *testing.T) {
 	}
 	if !strings.Contains(listed.Description, "Not implemented yet") {
 		t.Errorf("description %q does not say it is not implemented yet", listed.Description)
+	}
+	schema, _ := json.Marshal(listed.InputSchema)
+	var in struct {
+		Properties map[string]struct {
+			Type                 any `json:"type"`
+			AdditionalProperties struct {
+				Type any `json:"type"`
+			} `json:"additionalProperties"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(schema, &in); err != nil {
+		t.Fatalf("input schema %s: %v", schema, err)
+	}
+	if h, ok := in.Properties["headers"]; !ok || h.Type != "object" || h.AdditionalProperties.Type != "string" {
+		t.Errorf("input schema %s, want headers an object of strings", schema)
+	}
+	if slices.Contains(in.Required, "headers") {
+		t.Errorf("input schema requires headers, want it optional: %s", schema)
 	}
 }
 
