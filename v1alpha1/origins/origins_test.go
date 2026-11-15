@@ -344,6 +344,29 @@ func TestAdd(t *testing.T) {
 	}
 }
 
+// TestAppend pins an origin added while the run lasts: numbered next and
+// marked added, served at an address when AppendServed gives one, the
+// caller's copy untouched, and never in the key.
+func TestAppend(t *testing.T) {
+	o := New(WithDir("/work"), WithOrigins(NewOrigin(must(t, "http://localhost:3000"))))
+	key := o.Key()
+	api := NewOrigin(must(t, "https://api.example.com"))
+	if got := o.Append(api); got.Index != 1 || !got.Added || api.Added {
+		t.Errorf("Append = %+v (caller's %+v), want index 1, added, the caller's left alone", got, api)
+	}
+	at := must(t, "http://127.0.0.1:5000")
+	shell := NewOrigin(must(t, "exec:///bin/sh"))
+	if got := o.AppendServed(shell, at); got.Index != 2 || !got.Added {
+		t.Errorf("AppendServed = %+v, want index 2, added", got)
+	}
+	if dialed := o.Dialable(); len(dialed) != 3 || dialed[1].String() != "https://api.example.com" || dialed[2].String() != at.String() {
+		t.Errorf("Dialable() = %v, want the address as given, then the program where it is served", dialed)
+	}
+	if o.Key() != key {
+		t.Errorf("Key() = %s after adding, want %s, the run's", o.Key(), key)
+	}
+}
+
 // TestResolve pins what turns a bare argument into a program origin, and what
 // the origin then carries. The rules belong to the host — the $PATH search,
 // the executable bit, the Windows extensions — so the fixture is a directory

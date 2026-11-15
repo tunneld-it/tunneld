@@ -142,6 +142,24 @@ func (o *OriginsImpl) Append(origin v1.Origin) v1.Origin {
 	return clone(origin)
 }
 
+// AppendServed is Append for an origin already served at at: the address
+// is recorded in the same step, so no reader finds it before it can be
+// dialed.
+func (o *OriginsImpl) AppendServed(origin v1.Origin, at *url.URL) v1.Origin {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	origin = clone(origin)
+	origin.Index, origin.Added = len(o.origins), true
+	o.origins = append(o.origins, origin)
+	if at != nil {
+		if o.served == nil {
+			o.served = map[int]url.URL{}
+		}
+		o.served[origin.Index] = *at
+	}
+	return clone(origin)
+}
+
 // Len implements v1.Origins.
 func (o *OriginsImpl) Len() int {
 	o.mu.RLock()

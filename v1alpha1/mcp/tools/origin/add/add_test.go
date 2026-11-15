@@ -2,12 +2,17 @@ package add
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	v1 "github.com/tunnel-pizza/tunneld/v1"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/attach"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/auth"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/cache"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/mcp/tool"
@@ -113,19 +118,20 @@ func TestOriginAdd(t *testing.T) {
 }
 
 // TestOriginAddRefuses pins what it will not add, each saying why, with the
-// run left as it was: something that is no origin, a program or a
-// container, and a header a request cannot carry or that tunneld sets.
+// run left as it was: something that is no origin, a program on a run with
+// nothing to serve it, headers for a program, and a header a request cannot
+// carry or that tunneld sets.
 func TestOriginAddRefuses(t *testing.T) {
 	for name, tc := range map[string]struct {
 		in   In
 		says string
 	}{
-		"nothing":            {In{Origin: ""}, `"" is not an origin`},
-		"a program":          {In{Origin: "exec:///bin/sh"}, "origin_add can't start exec:///bin/sh yet"},
-		"a container":        {In{Origin: "attach://dockerd/web"}, "origin_add can't start attach://dockerd/web yet"},
-		"Host":               {In{Origin: "https://api.example.com", Headers: map[string]string{"host": "evil.example"}}, `header "host": tunneld sets it`},
-		"not a header name":  {In{Origin: "https://api.example.com", Headers: map[string]string{"x api": "k"}}, `header "x api": not a header name`},
-		"a line break value": {In{Origin: "https://api.example.com", Headers: map[string]string{"X-Api": "k\r\nX-Evil: 1"}}, `header "X-Api": its value is not one a header can carry`},
+		"nothing":              {In{Origin: ""}, `"" is not an origin`},
+		"a program, no server": {In{Origin: "exec:///bin/sh"}, "This run's origins are fixed"},
+		"headers on a program": {In{Origin: "exec:///bin/sh", Headers: map[string]string{"X-Api": "k"}}, `header "X-Api": only a web address is sent headers`},
+		"Host":                 {In{Origin: "https://api.example.com", Headers: map[string]string{"host": "evil.example"}}, `header "host": tunneld sets it`},
+		"not a header name":    {In{Origin: "https://api.example.com", Headers: map[string]string{"x api": "k"}}, `header "x api": not a header name`},
+		"a line break value":   {In{Origin: "https://api.example.com", Headers: map[string]string{"X-Api": "k\r\nX-Evil: 1"}}, `header "X-Api": its value is not one a header can carry`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			list := origins.New()
@@ -142,5 +148,87 @@ func TestOriginAddRefuses(t *testing.T) {
 	r, _, _ := run()(tool.Context{Log: slog.New(slog.DiscardHandler)}, t.Context(), &sdk.CallToolRequest{}, In{Origin: "https://api.example.com"})
 	if r == nil || !r.IsError || !strings.Contains(r.Content[0].(*sdk.TextContent).Text, "This run's origins are fixed") {
 		t.Errorf("origin_add on a run with no origins to change = %+v, want it refused", r)
+	}
+}
+
+// served stands in for the run's servers: Add appends what it is given as
+// served at a loopback address, or fails with err; Announce keeps what it
+// was told.
+type served struct {
+	attach.Attached
+	list      *origins.OriginsImpl
+	err       error
+	announced []string
+}
+
+func (s *served) Add(o v1.Origin) (v1.Origin, error) {
+	if s.err != nil {
+		return v1.Origin{}, s.err
+	}
+	return s.list.AppendServed(o, &url.URL{Scheme: "http", Host: "127.0.0.1:5000"}), nil
+}
+
+func (s *served) Announce(public []string) { s.announced = public }
+
+// TestOriginAddServesForStdioAndTheSecret pins who may start a program or
+// attach a container: the stdio client and the tunnel's secret; a sign-in,
+// whatever its scopes, is refused and nothing is served, while it may still
+// add a web address.
+func TestOriginAddServesForStdioAndTheSecret(t *testing.T) {
+	signIn := &auth.Access{Sub: "github:1", Scopes: []string{"mcp", "tunnel:origins", "tunnel:exec", "tunnel:attach"}}
+	for name, tc := range map[string]struct {
+		access *auth.Access
+		origin string
+		says   string
+	}{
+		"the secret, a program":    {nil, "exec:///bin/bash", `"index":1`},
+		"a sign-in, a program":     {signIn, "exec:///bin/bash", "This sign-in can't add exec:///bin/bash: it is exec"},
+		"a sign-in, a container":   {signIn, "attach://dockerd/web", "This sign-in can't add attach://dockerd/web: it is attach"},
+		"a sign-in, a web address": {signIn, "https://api.example.com", `"index":1`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			list := origins.New(origins.WithOrigins(tooltest.Origins(t, "http://localhost:3000").All()...))
+			c := tool.Context{Origins: list, Attached: &served{list: list}, Log: slog.New(slog.DiscardHandler)}
+			args, _ := json.Marshal(map[string]string{"origin": tc.origin})
+			status, body := tooltest.Call(t, Tool, c, tc.access, string(args))
+			if status != 200 || !strings.Contains(body, tc.says) {
+				t.Errorf("origin_add(%s) = %d %s, want %q", tc.origin, status, body, tc.says)
+			}
+			if refused := strings.Contains(tc.says, "can't"); refused && list.Len() != 1 {
+				t.Errorf("a refused add left %d origins, want 1", list.Len())
+			}
+		})
+	}
+	r, _, err := run()(tool.Context{Origins: origins.New(), Attached: &served{list: origins.New()}, Log: slog.New(slog.DiscardHandler)}, t.Context(), &sdk.CallToolRequest{}, In{Origin: "exec:///bin/bash"})
+	if err != nil || r != nil {
+		t.Errorf("origin_add of a program over stdio = %+v, %v; want it served", r, err)
+	}
+}
+
+// TestOriginAddServes pins a program and a container: each handed to the
+// run's servers, which serve it before it is added, and every served origin
+// told its address again, the first one's bare address now ?0. One that
+// cannot be served adds nothing, saying why.
+func TestOriginAddServes(t *testing.T) {
+	list := origins.New(origins.WithOrigins(tooltest.Origins(t, "exec:///bin/sh").All()...))
+	tracked := cache.New(cache.WithDir(""), cache.WithTracking(map[string]string{"LIBTUNNEL_HOSTNAME": "0tabc.tunneld.domain"}))
+	servers := &served{list: list}
+	c := tool.Context{Origins: list, Attached: servers, Cache: tracked, Log: slog.New(slog.DiscardHandler)}
+
+	for i, word := range []string{"exec:///bin/zsh", "attach://dockerd/web"} {
+		r, out, err := run()(c, t.Context(), &sdk.CallToolRequest{}, In{Origin: word})
+		if err != nil || r != nil || out.Session.Index != 1+i || out.Session.Address != fmt.Sprintf("https://0tabc.tunneld.domain/?%d", 1+i) {
+			t.Fatalf("origin_add(%q) = %+v, %+v, %v; want it served at index %d", word, r, out.Session, err, 1+i)
+		}
+	}
+	want := []string{"https://0tabc.tunneld.domain/?0", "https://0tabc.tunneld.domain/?1", "https://0tabc.tunneld.domain/?2"}
+	if !slices.Equal(servers.announced, want) {
+		t.Errorf("announced %q, want %q", servers.announced, want)
+	}
+
+	servers.err = errors.New("no such container")
+	r, _, _ := run()(c, t.Context(), &sdk.CallToolRequest{}, In{Origin: "attach://dockerd/gone"})
+	if r == nil || !r.IsError || r.Content[0].(*sdk.TextContent).Text != "Could not serve attach://dockerd/gone: no such container" || list.Len() != 3 {
+		t.Errorf("origin_add of a container that is not there = %+v, %d origins; want it refused, nothing added", r, list.Len())
 	}
 }
