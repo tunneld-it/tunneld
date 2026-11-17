@@ -2940,14 +2940,17 @@ func TestMCPRunKeepsStdoutForItsClient(t *testing.T) {
 }
 
 // TestMCPClientClosingStdinEndsTheRun pins how an --mcp run ends without a
-// signal: its client exits, stdin closes, and the run returns as if stopped,
-// rather than holding the tunnel open for nobody.
+// signal: its client, having spoken, exits, stdin closes, and the run returns
+// as if stopped, rather than holding the tunnel open for nobody.
 func TestMCPClientClosingStdinEndsTheRun(t *testing.T) {
 	client := mcpStdin(t)
 	h := newRunHarness(t, live("https://foo.tunneld.domain/"), "http://localhost:3000")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	h.cache.onSave = func() { _ = client.Close() }
+	h.cache.onSave = func() {
+		_, _ = io.WriteString(client, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`+"\n")
+		_ = client.Close()
+	}
 
 	if err := h.run(t, ctx, "--mcp"); err != nil {
 		t.Fatalf("run() = %v", err)

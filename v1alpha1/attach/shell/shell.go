@@ -417,9 +417,16 @@ func (a *TargetImpl) AttachContainer(ctx context.Context, _, _, _ string, in io.
 			if size.Width == 0 || size.Height == 0 {
 				continue
 			}
-			if err := pty.Setsize(term, &pty.Winsize{Rows: size.Height, Cols: size.Width}); err != nil && ctx.Err() == nil {
-				a.log.Debug("could not resize program", "program", a.ref, "error", err)
+			// Under the lock stop closes the terminal with, and only while it
+			// is still this one: a resize reads the descriptor, which a close
+			// is tearing down.
+			a.mu.Lock()
+			if a.term == term {
+				if err := pty.Setsize(term, &pty.Winsize{Rows: size.Height, Cols: size.Width}); err != nil && ctx.Err() == nil {
+					a.log.Debug("could not resize program", "program", a.ref, "error", err)
+				}
 			}
+			a.mu.Unlock()
 		}
 	}()
 

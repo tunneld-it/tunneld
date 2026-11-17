@@ -1664,7 +1664,7 @@ func TestDoneReachesTheAttacher(t *testing.T) {
 
 	// The second origin's viewer asks. One channel for all of them, because
 	// what they are asking for is the process.
-	servers := closer.(attached)
+	servers := closer.(*attached)
 	servers.origins[1].srv.session.endRun()
 
 	select {
@@ -1787,7 +1787,7 @@ func TestAnnounceReachesTheRightTerminal(t *testing.T) {
 		"https://example.test/?3",
 	})
 
-	servers, ok := closer.(attached)
+	servers, ok := closer.(*attached)
 	if !ok {
 		t.Fatalf("closer is %T, want the attached list", closer)
 	}
@@ -1803,10 +1803,52 @@ func TestAnnounceReachesTheRightTerminal(t *testing.T) {
 
 	// And a caller with fewer addresses than origins leaves them unset rather
 	// than reaching for one that is not there.
-	short := attached{origins: []attachedOrigin{{at: 9, srv: servers.origins[0].srv}}}
+	short := &attached{origins: []attachedOrigin{{at: 9, srv: servers.origins[0].srv}}}
 	short.Announce([]string{"https://example.test/?0"})
 	if got := servers.origins[0].srv.session.announced(); got == "https://example.test/?0" {
 		t.Error("an index past the addresses given took the first one, want it left alone")
+	}
+}
+
+// TestAttachedAdd pins a container added while the run lasts: opened by the
+// provider its scheme names, served on loopback, and only then in the run's
+// origins at the next index with that address; a terminal there, told its
+// public address, and closed with the rest. A scheme nobody answers, and a
+// target that will not open, add nothing.
+func TestAttachedAdd(t *testing.T) {
+	targets := &stubTargets{}
+	list := shown(t, "http://localhost:3000")
+	servers, err := New(WithTargets(targets)).Attach(t.Context(), list, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer servers.Close()
+
+	web := mustOrigins(t, "attach://dockerd/web")[0]
+	added, err := servers.Add(web)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if added.Index != 1 || !added.Added || list.Len() != 2 || !slices.Equal(targets.asked, []string{"web"}) {
+		t.Fatalf("Add = %+v, origins %d, opened %q; want web at index 1, added, opened once", added, list.Len(), targets.asked)
+	}
+	if at := list.Dialable()[1]; at.Scheme != "http" || !strings.HasPrefix(at.Host, "127.0.0.1:") {
+		t.Errorf("origin 1 is dialed at %v, want its loopback server", at)
+	}
+	if _, ok := servers.Terminal(1); !ok {
+		t.Error("no terminal at the added index")
+	}
+	servers.Announce([]string{"https://example.test/?0", "https://example.test/?1"})
+	if got := servers.(*attached).origins[0].srv.session.announced(); got != "https://example.test/?1" {
+		t.Errorf("the added server was told %q, want its ?1", got)
+	}
+
+	if _, err := servers.Add(mustOrigins(t, "attach://podman/web")[0]); err == nil || list.Len() != 2 {
+		t.Errorf("Add with no provider = %v, %d origins; want an error and nothing added", err, list.Len())
+	}
+	targets.failOn = 2
+	if _, err := servers.Add(mustOrigins(t, "attach://dockerd/gone")[0]); err == nil || list.Len() != 2 {
+		t.Errorf("Add of a target that will not open = %v, %d origins; want an error and nothing added", err, list.Len())
 	}
 }
 

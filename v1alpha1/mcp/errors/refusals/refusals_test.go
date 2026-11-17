@@ -67,7 +67,8 @@ func TestSays(t *testing.T) {
 		"Unowned":        {Unowned("origin_add"), []string{"origin_add can't change a tunnel nobody owns", "Only the client that started its tunneld, over stdio, or the tunnel's secret can"}},
 		"Fixed":          {Fixed("origin_add"), []string{"This run's origins are fixed: origin_add can't change them"}},
 		"NotAnOrigin":    {NotAnOrigin(""), []string{`"" is not an origin`, "origin is a web address, such as https://api.example.com"}},
-		"NotYetServed":   {NotYetServed(v1.Origin{URI: url.URL{Scheme: "exec", Path: "/bin/sh"}, Scheme: v1.ExecScheme}), []string{"origin_add can't start exec:///bin/sh yet: it is exec", "origin_add adds a web address for now; a program or a container is one tunneld is started with"}},
+		"ServesBySignIn": {ServesBySignIn(v1.Origin{URI: url.URL{Scheme: "exec", Path: "/bin/bash"}, Scheme: v1.ExecScheme}), []string{"This sign-in can't add exec:///bin/bash: it is exec", "a sign-in adds web addresses; the client that started this tunneld, over stdio, or the tunnel's secret starts a program or attaches a container"}},
+		"Unserved":       {Unserved(v1.Origin{URI: url.URL{Scheme: "attach", Host: "dockerd", Path: "/web"}, Scheme: v1.AttachScheme}, fmt.Errorf("no such container")), []string{"Could not serve attach://dockerd/web: no such container", "nothing was added; check the program is on this machine, or the container is running, and try again"}},
 		"BadHeader":      {BadHeader("Host", fmt.Errorf("tunneld sets it")), []string{`header "Host": tunneld sets it`, "headers are names and values a request could carry; Host and the headers a connection is managed by are tunneld's to set"}},
 		"UnknownScheme":  {UnknownScheme("ssh"), []string{`"ssh" is not a scheme`, "scheme must be exec, attach or http"}},
 	} {

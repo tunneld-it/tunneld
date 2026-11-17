@@ -138,11 +138,18 @@ func NotAnOrigin(word string) error {
 		fmt.Errorf("%q is not an origin", word))
 }
 
-// NotYetServed is the refusal for origin, a program or a container, which
-// origin_add does not start yet.
-func NotYetServed(origin v1.Origin) error {
-	return refusal("origin_add adds a web address for now; a program or a container is one tunneld is started with",
-		fmt.Errorf("origin_add can't start %s yet: it is %s", origin.Label(), origin.Scheme))
+// ServesBySignIn is the refusal for origin, a program or a container, asked
+// of origin_add by a sign-in.
+func ServesBySignIn(origin v1.Origin) error {
+	return refusal("a sign-in adds web addresses; the client that started this tunneld, over stdio, or the tunnel's secret starts a program or attaches a container",
+		fmt.Errorf("This sign-in can't add %s: it is %s", origin.Label(), origin.Scheme))
+}
+
+// Unserved is the refusal for origin, a program or a container that could
+// not be stood up, err saying why.
+func Unserved(origin v1.Origin, err error) error {
+	return refusal("nothing was added; check the program is on this machine, or the container is running, and try again",
+		fmt.Errorf("Could not serve %s: %w", origin.Label(), err))
 }
 
 // BadHeader is the refusal for header name, err saying why.

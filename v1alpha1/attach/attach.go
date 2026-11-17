@@ -246,12 +246,15 @@ type Attacher interface {
 	Attach(ctx context.Context, origins Servable, log v1.Logger) (Attached, error)
 }
 
-// Servable is the origins Attach is handed: the run's list, and Serve, which
-// records the loopback address it stands up for one of them. Kept off
-// v1.Origins so the packages that read the list cannot reroute it.
+// Servable is the origins Attach is handed: the run's list, Serve, which
+// records the loopback address it stands up for one of them, and
+// AppendServed, which adds one already served at that address in the same
+// step, so nothing reads it before it can be dialed. Kept off v1.Origins so
+// the packages that read the list cannot reroute it.
 type Servable interface {
 	v1.Origins
 	Serve(i int, at *url.URL)
+	AppendServed(origin v1.Origin, at *url.URL) v1.Origin
 }
 
 // Option configures an AttacherImpl at construction.
@@ -367,8 +370,8 @@ func (b *AttacherImpl) answered() []string {
 // an error, and a listener left behind would outlive it inside an embedding
 // program.
 func (b *AttacherImpl) Attach(ctx context.Context, origins Servable, log *slog.Logger) (Attached, error) {
-	servers := attached{exits: &exits{ch: make(chan []int, 1)}}
 	asked := newAsk()
+	servers := &attached{exits: &exits{ch: make(chan []int, 1)}, asked: asked, attacher: b, servable: origins, ctx: ctx, log: log}
 	for _, origin := range origins.All() {
 		// Anything no provider claims is an address the tunnel dials itself.
 		// http and https are the whole of that today; the origin parser
@@ -441,7 +444,7 @@ func (b *AttacherImpl) Attach(ctx context.Context, origins Servable, log *slog.L
 // A wrapper rather than a flag, because what a caller wants to know is whether
 // to ask, and a method set is how Go says that. attached keeps show unexported
 // to this file so the only way to reach it is through here.
-type sole struct{ attached }
+type sole struct{ *attached }
 
 func (s sole) Show(ctx context.Context, in io.Reader, out io.Writer) error {
 	return s.attached.show(ctx, in, out)
@@ -477,6 +480,11 @@ type Attached interface {
 	// Terminal is the session serving origin index, false for an origin
 	// this run dials rather than serves, or an index past the run.
 	Terminal(index int) (Terminal, bool)
+	// Add serves origin, a program or a container, while the run lasts,
+	// and adds it to the run's origins at the next index, answering it as
+	// added. A program starts at once. It lasts as long as the run and
+	// does not count toward Exited.
+	Add(origin v1.Origin) (v1.Origin, error)
 }
 
 // attached is every attach server an Attach call started, with the place in the
@@ -487,8 +495,18 @@ type Attached interface {
 // origins are told apart by their routing parameter, so origin n's address is
 // derived from n.
 type attached struct {
+	// mu guards origins, which Add grows while the run lasts.
+	mu      sync.RWMutex
 	origins []attachedOrigin
 	exits   *exits
+	asked   *ask
+
+	// What Add serves with: the attacher's providers and frame, the
+	// run's origins, and the run's lifetime, not a caller's.
+	attacher *AttacherImpl
+	servable Servable
+	ctx      context.Context
+	log      *slog.Logger
 }
 
 // exits is where the programs one Attach started report ending, and where the
@@ -532,7 +550,7 @@ func (e *exits) ended() {
 }
 
 // Exited is where the run learns every program has ended.
-func (b attached) Exited() <-chan []int {
+func (b *attached) Exited() <-chan []int {
 	if b.exits == nil {
 		return nil
 	}
@@ -545,7 +563,9 @@ func (b attached) Exited() <-chan []int {
 // when there is exactly one: an attached list of several has nothing to draw, and
 // the length check that used to live here was a guard against a caller that
 // can no longer exist.
-func (b attached) show(ctx context.Context, in io.Reader, out io.Writer) error {
+func (b *attached) show(ctx context.Context, in io.Reader, out io.Writer) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	if len(b.origins) != 1 {
 		return fmt.Errorf("attach: %d origins to show, want exactly one", len(b.origins))
 	}
@@ -568,22 +588,54 @@ func (b attached) show(ctx context.Context, in io.Reader, out io.Writer) error {
 // same breath as the frame's own ask; a relay goroutine would not have run
 // yet, and the console would leave "Press Ctrl+C to stop the tunnel..." on a
 // prompt the run is about to walk away from.
-func (b attached) Done() <-chan struct{} {
-	if len(b.origins) == 0 {
-		// Nothing served, so nobody who could ask: a channel that never closes.
+func (b *attached) Done() <-chan struct{} {
+	if b.asked == nil {
 		return make(chan struct{})
 	}
-	return b.origins[0].srv.Done()
+	return b.asked.ch
 }
 
 // Terminal is the session of the server that took index.
-func (b attached) Terminal(index int) (Terminal, bool) {
+func (b *attached) Terminal(index int) (Terminal, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	for _, o := range b.origins {
 		if o.at == index {
 			return o.srv.session, true
 		}
 	}
 	return nil, false
+}
+
+// Add implements Attached: origin opened by the provider its scheme names,
+// served on loopback, and only then added to the run's origins with that
+// address, so the router never sees it undialable.
+func (b *attached) Add(origin v1.Origin) (v1.Origin, error) {
+	if b.attacher == nil || b.servable == nil {
+		return v1.Origin{}, errors.New("attach: this run's origins are fixed")
+	}
+	u := origin.URL()
+	provider, served := b.attacher.targets[answers(v1.Scheme(u.Scheme), v1.Provider(u.Host))]
+	if !served {
+		return v1.Origin{}, fmt.Errorf("attach: nothing answers %s://%s, only %s",
+			u.Scheme, u.Host, strings.Join(b.attacher.answered(), ", "))
+	}
+	target, err := provider.Open(b.ctx, origin.Ref, origin.Args, b.log)
+	if err != nil {
+		return v1.Origin{}, err
+	}
+	a := b.attacher
+	server, err := serve(b.ctx, target, a.banner, a.logs, a.motd, a.sinks, b.asked, false, b.log)
+	if err != nil {
+		_ = target.Close()
+		return v1.Origin{}, err
+	}
+	b.mu.Lock()
+	added := b.servable.AppendServed(origin, server.URL())
+	b.origins = append(b.origins, attachedOrigin{at: added.Index, srv: server})
+	b.mu.Unlock()
+	b.log.Info("serving a reference as an added origin", "reference", u.Host+u.Path, "scheme", u.Scheme, "origin", server.URL(), "index", added.Index)
+	return added, nil
 }
 
 type attachedOrigin struct {
@@ -594,7 +646,9 @@ type attachedOrigin struct {
 // Close shuts every attach server down, and with it every container client
 // they own. The first error is returned and the rest still close: a partial
 // shutdown is worse than a lost error message.
-func (b attached) Close() error {
+func (b *attached) Close() error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	var err error
 	for _, o := range b.origins {
 		if cerr := o.srv.Close(); err == nil {
@@ -605,7 +659,9 @@ func (b attached) Close() error {
 }
 
 // Mirror copies each server's output to w behind the prefix for its index.
-func (b attached) Mirror(w io.Writer, prefixes []string) {
+func (b *attached) Mirror(w io.Writer, prefixes []string) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	mu := &sync.Mutex{}
 	for _, o := range b.origins {
 		if o.at < len(prefixes) && prefixes[o.at] != "" {
@@ -615,7 +671,9 @@ func (b attached) Mirror(w io.Writer, prefixes []string) {
 }
 
 // Start runs every program a server here was holding for it.
-func (b attached) Start() {
+func (b *attached) Start() {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	for _, o := range b.origins {
 		o.srv.Start()
 	}
@@ -631,7 +689,9 @@ func (b attached) Start() {
 //
 // A short list is not an error. It means the caller had fewer addresses than
 // origins, and a server without one simply has nothing to show.
-func (b attached) Announce(public []string) {
+func (b *attached) Announce(public []string) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	for _, o := range b.origins {
 		if o.at < len(public) {
 			o.srv.Announce(public[o.at])
