@@ -131,16 +131,20 @@ func TestWithContext(t *testing.T) {
 	}
 }
 
-// TestWithEnded pins when the stdio session's end is reported: the client
-// closing stdin is, the server being closed first is not.
+// TestWithEnded pins when the stdio session's end is reported: a client
+// that spoke closing stdin is; the server being closed first is not, and
+// neither is a stdin that closes with nothing sent, as /dev/null does.
 func TestWithEnded(t *testing.T) {
+	const initialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}` + "\n"
 	for _, tc := range []struct {
 		name  string
+		sent  string
 		close bool
 		want  bool
 	}{
-		{"the client closes stdin", false, true},
-		{"the server is closed first", true, false},
+		{"the client closes stdin", initialize, false, true},
+		{"the server is closed first", initialize, true, false},
+		{"nothing was ever sent", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, w, err := os.Pipe()
@@ -153,6 +157,7 @@ func TestWithEnded(t *testing.T) {
 			if tc.close {
 				_ = m.Close()
 			}
+			_, _ = io.WriteString(w, tc.sent)
 			_ = w.Close()
 
 			wait := 5 * time.Second
@@ -162,7 +167,7 @@ func TestWithEnded(t *testing.T) {
 			select {
 			case <-ended:
 				if !tc.want {
-					t.Error("ended was called for a server closed first")
+					t.Error("ended was called, want the run left serving")
 				}
 			case <-time.After(wait):
 				if tc.want {

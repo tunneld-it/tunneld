@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	v1 "github.com/tunnel-pizza/tunneld/v1"
@@ -83,6 +84,12 @@ func New(opts ...Option) *McpImpl {
 			if ctx.Err() != nil {
 				return
 			}
+			// A stdin that closes before a byte arrives had no client on
+			// it, as /dev/null has none: the run serves over HTTP alone.
+			if spoke, ok := m.stdio.(*sdk.IOTransport).Reader.(*heard); ok && !spoke.any.Load() {
+				m.log.Info("mcp: nothing on stdin; serving over HTTP only")
+				return
+			}
 			if err != nil {
 				m.log.Warn("mcp: stdio ended", "error", err)
 			}
@@ -129,13 +136,28 @@ func WithStdio(r io.Reader, w io.Writer) Option {
 		if !ok {
 			rc = io.NopCloser(r)
 		}
-		m.stdio = &sdk.IOTransport{Reader: rc, Writer: openWriter{w}}
+		m.stdio = &sdk.IOTransport{Reader: &heard{ReadCloser: rc}, Writer: openWriter{w}}
 	}
+}
+
+// heard is a stdin that remembers whether anything ever arrived on it.
+type heard struct {
+	io.ReadCloser
+	any atomic.Bool
+}
+
+func (h *heard) Read(p []byte) (int, error) {
+	n, err := h.ReadCloser.Read(p)
+	if n > 0 {
+		h.any.Store(true)
+	}
+	return n, err
 }
 
 // WithEnded calls f once the stdio session ends without the server being
 // closed: the client closed stdin, or the session failed. Not called for a
-// server with no stdio, nor once Close or the context has ended it.
+// server with no stdio, for a stdin that closed with nothing ever sent on it,
+// nor once Close or the context has ended it.
 func WithEnded(f func()) Option {
 	return func(m *McpImpl) { m.ended = f }
 }
