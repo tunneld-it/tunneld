@@ -30,4 +30,11 @@ func TestDir(t *testing.T) {
 	if got := Dir(); got != set {
 		t.Errorf("Dir() with %s=%s = %q, want it as given", v1.CacheDirEnv, set, got)
 	}
+
+	t.Chdir(t.TempDir())
+	wd, _ := os.Getwd()
+	t.Setenv(v1.CacheDirEnv, "cache")
+	if got, want := Dir(), filepath.Join(wd, "cache"); got != want {
+		t.Errorf("Dir() with %s=cache = %q, want it absolute, %q", v1.CacheDirEnv, got, want)
+	}
 }

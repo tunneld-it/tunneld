@@ -1,6 +1,8 @@
 package pid
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -24,7 +26,7 @@ func TestSummary(t *testing.T) {
 			}}, false,
 			[]string{
 				"",
-				"🍕 tunneld is now running in the background",
+				"🚇 tunneld is now running in the background",
 				"",
 				"    cwd  ~/project",
 				"    pid  42",
@@ -45,7 +47,7 @@ func TestSummary(t *testing.T) {
 			}}, false,
 			[]string{
 				"",
-				"🍕 tunneld is now running in the background",
+				"🚇 tunneld is now running in the background",
 				"",
 				"    pid  42",
 				"",
@@ -63,7 +65,7 @@ func TestSummary(t *testing.T) {
 			Run{Pid: 42, LogPath: "/var/log/__no_cache__3000.log"}, false,
 			[]string{
 				"",
-				"🍕 tunneld is now running in the background",
+				"🚇 tunneld is now running in the background",
 				"",
 				"    pid  42",
 				"    log  /var/log/__no_cache__3000.log",
@@ -82,7 +84,7 @@ func TestSummary(t *testing.T) {
 			var b strings.Builder
 			Summary(&b, tc.run, tc.already, Style{Columns: 78})
 			if tc.want == nil {
-				if !strings.Contains(b.String(), "🍕 tunneld is already running in the background\n") {
+				if !strings.Contains(b.String(), "🚇 tunneld is already running in the background\n") {
 					t.Errorf("summary =\n%s\nwant it to say already", b.String())
 				}
 				return
@@ -142,8 +144,7 @@ func TestAddresses(t *testing.T) {
 }
 
 // TestList pins -l's lines: the pid padded to the widest, then the address,
-// directory and origins, or the key with no settings; short, the pid and
-// address alone.
+// directory and origins, or the key with no settings.
 func TestList(t *testing.T) {
 	t.Setenv("HOME", "/home/me")
 	runs := []Run{
@@ -151,14 +152,33 @@ func TestList(t *testing.T) {
 		{Pid: 12345, Key: "__no_cache__4000"},
 	}
 	var b strings.Builder
-	List(&b, runs, false)
+	List(&b, runs)
 	if want := "7      https://t.example/  ~/project  /bin/bash -l\n12345  __no_cache__4000\n"; b.String() != want {
 		t.Errorf("List =\n%q\nwant\n%q", b.String(), want)
 	}
+}
+
+// TestListJSON pins -l -s: one JSON array, [] for none, each run its pid and
+// key and what its settings and log give, never its spec.
+func TestListJSON(t *testing.T) {
+	runs := []Run{
+		{Pid: 7, Key: "k", EnvPath: "/c/k.env", LogPath: "/c/k.log", Env: map[string]string{
+			"LIBTUNNEL_SPEC": `{"secret":"s3cret"}`, "LIBTUNNEL_HOSTNAME": "t.example", "PWD": "/work",
+			"TUNNELD_ORIGINS": "http://localhost:3000,exec:///bin/bash?arg=-l",
+		}},
+		{Pid: 12345, Key: "__no_cache__4000"},
+	}
+	var b strings.Builder
+	if err := ListJSON(&b, runs); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"pid":7,"key":"k","address":"https://t.example/","addresses":["https://t.example/?0","https://t.example/?1"],"cwd":"/work","origins":["http://localhost:3000","exec:///bin/bash?arg=-l"],"env":"/c/k.env","log":"/c/k.log"},{"pid":12345,"key":"__no_cache__4000"}]` + "\n"
+	if b.String() != want {
+		t.Errorf("ListJSON =\n%s\nwant\n%s", b.String(), want)
+	}
 	b.Reset()
-	List(&b, runs, true)
-	if want := "7      https://t.example/\n12345  __no_cache__4000\n"; b.String() != want {
-		t.Errorf("List short =\n%q\nwant\n%q", b.String(), want)
+	if err := ListJSON(&b, nil); err != nil || b.String() != "[]\n" {
+		t.Errorf("ListJSON of none = %q, %v; want []", b.String(), err)
 	}
 }
 
@@ -177,6 +197,25 @@ func TestLabel(t *testing.T) {
 	} {
 		if got := label(origin); got != want {
 			t.Errorf("label(%q) = %q, want %q", origin, got, want)
+		}
+	}
+}
+
+// TestListJSONPathsAreAbsolute pins every path -l -s prints as absolute,
+// whatever directory the registry was named by.
+func TestListJSONPathsAreAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var b strings.Builder
+	if err := ListJSON(&b, []Run{{Pid: 7, Key: "k", EnvPath: "cache/k.env", LogPath: "cache/k.log", Env: map[string]string{"PWD": "/work"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []struct{ Cwd, Env, Log string }
+	if err := json.Unmarshal([]byte(b.String()), &got); err != nil || len(got) != 1 {
+		t.Fatalf("ListJSON = %s, %v", b.String(), err)
+	}
+	for name, p := range map[string]string{"cwd": got[0].Cwd, "env": got[0].Env, "log": got[0].Log} {
+		if !filepath.IsAbs(p) {
+			t.Errorf("%s = %q, want an absolute path", name, p)
 		}
 	}
 }

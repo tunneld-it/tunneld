@@ -461,7 +461,7 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 	}
 
 	// -l needs no origins either: the runs are what the registry holds.
-	// Silent, a run is its pid and address.
+	// Silent, they are one JSON array on stdout, [] for none.
 	if b.list {
 		if cmd.Flags().NArg() > 0 {
 			return errors.New("--list takes no origins: it lists every run")
@@ -473,11 +473,14 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("--list: %w", err)
 		}
+		if b.silent {
+			return pid.ListJSON(cmd.OutOrStdout(), runs)
+		}
 		if len(runs) == 0 {
 			fmt.Fprintln(stderr, cmd.Name()+": no runs")
 			return nil
 		}
-		pid.List(cmd.OutOrStdout(), runs, b.silent)
+		pid.List(cmd.OutOrStdout(), runs)
 		return nil
 	}
 

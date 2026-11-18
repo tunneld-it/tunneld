@@ -64,7 +64,7 @@ its own to share your shell.
 | 🤖 | `npx tunneld claude --resume` | A coding agent you can keep working with from your phone or another computer. |
 | ✏️ | `npx tunneld nvim` | Your editor, config and plugins included, in a browser tab. |
 | 🪟 | `npx tunneld :3000 :4000` | Two apps on one hostname, side by side in one window. |
-| 🍕 | `npx tunneld :3000 'npm run dev' claude` | `npm run dev`, your app, and a Claude session beside it. |
+| 🚇 | `npx tunneld :3000 'npm run dev' claude` | `npm run dev`, your app, and a Claude session beside it. |
 | 🐳 | `npx tunneld attach://dockerd/web` | A running container's terminal. Compose service names work too. |
 
 Anything that runs in a terminal works: htop, a REPL, Codex, Gemini CLI,
@@ -222,7 +222,7 @@ flag has a `TUNNELD_*` environment variable, and the flag wins.
 | `--qr` | `TUNNELD_QR` | Print your address as a QR code too, and open no tab. Scan it with your phone. |
 | `-s` | `TUNNELD_SILENT` | Print only your address, once the tunnel is up, for a script: `read -r url < <(tunneld -s :3000)`. |
 | `-d` | `TUNNELD_DETACH` | Run in the background and give the prompt back once the address is out. See [In the background](#in-the-background). |
-| `-l` | `TUNNELD_LIST` | List every run on this machine. |
+| `-l` | `TUNNELD_LIST` | List every run on this machine; with `-s`, as JSON. |
 | `--log-level debug` | `TUNNELD_LOG` | Log to stderr. Silent by default. |
 | `--provider <host>` | `TUNNELD_PROVIDER` | Mint against another provider. Default `tunnel.pizza`. |
 | *(the arguments)* | `TUNNELD_ORIGINS` | Origins, comma-separated. |
@@ -239,7 +239,7 @@ Every flag and variable in full: [docs/reference.md](./docs/reference.md#flags).
 `-d` (or `TUNNELD_DETACH=1`) detaches: the addresses print, the prompt comes
 back with a summary, and the tunnel stays up; run again, it hands back the
 run already going. `-l` lists every run on the machine. With `-s`, `-d`
-prints only the address and `-l` only each run's pid and address. Under
+prints only the address and `-l` prints JSON. Under
 `npx`, `npx tunneld -k` ends every tunneld run on the machine, detached or
 not, the way Ctrl+C would, and `-k<pid>` ends just that one; `-k` belongs to
 the npm launcher. None of them is available on Windows yet.

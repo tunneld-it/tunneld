@@ -1,6 +1,7 @@
 package pid
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -60,7 +61,7 @@ func Summary(w io.Writer, run Run, already bool, s Style) {
 	if already {
 		state = "already"
 	}
-	lines := []string{"", s.bold("🍕 tunneld is " + state + " running in the background"), ""}
+	lines := []string{"", s.bold("🚇 tunneld is " + state + " running in the background"), ""}
 	row := func(name, value string) { lines = append(lines, "    "+s.dim(name)+"  "+value) }
 	if pwd := run.Env["PWD"]; pwd != "" {
 		row("cwd", home(pwd))
@@ -106,8 +107,8 @@ func Summary(w io.Writer, run Run, already bool, s Style) {
 
 // List prints every run on w, a line each: its pid, then its address,
 // directory and origins from its cached settings, or its key when there are
-// none. Short, a line is the pid and the address alone.
-func List(w io.Writer, runs []Run, short bool) {
+// none.
+func List(w io.Writer, runs []Run) {
 	width := 0
 	for _, r := range runs {
 		width = max(width, len(strconv.Itoa(r.Pid)))
@@ -116,10 +117,6 @@ func List(w io.Writer, runs []Run, short bool) {
 		fields := []string{pad(strconv.Itoa(r.Pid), width)}
 		if host := r.Env["LIBTUNNEL_HOSTNAME"]; host != "" {
 			fields = append(fields, "https://"+host+"/")
-			if short {
-				fmt.Fprintln(w, strings.Join(fields, "  "))
-				continue
-			}
 			if pwd := r.Env["PWD"]; pwd != "" {
 				fields = append(fields, home(pwd))
 			}
@@ -135,6 +132,36 @@ func List(w io.Writer, runs []Run, short bool) {
 		}
 		fmt.Fprintln(w, strings.Join(fields, "  "))
 	}
+}
+
+// listed is a run as -l -s prints it: Env is the path of its settings file,
+// never what it holds, since the spec is among them.
+type listed struct {
+	Pid       int      `json:"pid"`
+	Key       string   `json:"key"`
+	Address   string   `json:"address,omitempty"`
+	Addresses []string `json:"addresses,omitempty"`
+	Cwd       string   `json:"cwd,omitempty"`
+	Origins   []string `json:"origins,omitempty"`
+	Env       string   `json:"env,omitempty"`
+	Log       string   `json:"log,omitempty"`
+}
+
+// ListJSON prints every run on w as one JSON array, [] for none: each run's
+// pid and key, then its address, the address of each origin, its directory
+// and origins from its cached settings, and the paths of its settings and log,
+// those it has, every path absolute.
+func ListJSON(w io.Writer, runs []Run) error {
+	out := make([]listed, 0, len(runs))
+	for _, r := range runs {
+		l := listed{Pid: r.Pid, Key: r.Key, Cwd: absolute(r.Env["PWD"]), Origins: split(r.Env["TUNNELD_ORIGINS"]), Env: absolute(r.EnvPath), Log: absolute(r.LogPath)}
+		if host := r.Env["LIBTUNNEL_HOSTNAME"]; host != "" {
+			l.Address = "https://" + host + "/"
+			l.Addresses = Addresses(r)
+		}
+		out = append(out, l)
+	}
+	return json.NewEncoder(w).Encode(out)
 }
 
 // prose is what the run shares, said as a sentence: the origins, the address
@@ -229,6 +256,17 @@ func split(list string) []string {
 		}
 	}
 	return out
+}
+
+// absolute is path made absolute against the working directory, "" for "".
+func absolute(path string) string {
+	if path == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // pad is text padded with spaces to width.

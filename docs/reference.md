@@ -1037,7 +1037,7 @@ default.**
 | `--mcp` | `TUNNELD_MCP` | Serve MCP on stdin and stdout, for the MCP client that started the run: a plugin's stdio server. stdout then carries JSON-RPC and nothing else, so the addresses a run would print there go to stderr, as does whatever else writes to stdout while it runs: a library, or a program the run starts, and a pipe on stdin is the client's rather than a `kubectl debug -i` session's, so no line on it stops the run: the client closing it does, as a signal would, once that client has sent something on it. A stdin that closes with nothing ever sent (`/dev/null`, or one closed from the start) has no client on it, and the run keeps serving MCP over HTTP. The tunnel's MCP server at `/_tunneld/mcp` is there either way. **Default off.** |
 | `-s`, `--silent` | `TUNNELD_SILENT` | Print only the address on stdout, once the tunnel is up, and none of tunneld's own lines on stderr: no banner, origin lines, spinner or stop hint, and no frame or tab. Errors, logs, a program's output and `--qr` still reach stderr. See [Output contract](#output-contract). **Default off.** |
 | `-d`, `--detach` | `TUNNELD_DETACH` | Run in the background: the run is started again in a session of its own, and the prompt comes back once its address is out, with a summary on stderr (none with `-s`). The same run already going is handed back instead. Not on Windows. See [In the background](#in-the-background). **Default off.** |
-| `-l`, `--list` | `TUNNELD_LIST` | List the runs registered on this machine, a line each, and exit; with `-s`, each run's pid and address alone. Takes no origins. See [In the background](#in-the-background). **Default off.** |
+| `-l`, `--list` | `TUNNELD_LIST` | List the runs registered on this machine, a line each, and exit; with `-s`, as one JSON array. Takes no origins. See [In the background](#in-the-background). **Default off.** |
 | `--preflight` | `TUNNELD_PREFLIGHT` | Check every network path a tunnel depends on, say which route a run would take, and exit; mints nothing and opens no tunnel. See [Preflight](#preflight). **Default off.** |
 | `--identity-providers` | `TUNNELD_IDENTITY_PROVIDERS` | Identity providers to find a mint credential with, all asked at once, the first in the list to find one winning. **Default `github,anthropic`**: `gh auth token` and then the GitHub environment variables, then a Claude Code workspace's OAuth token. Empty sends no credential. A name with no provider behind it is an error before the tunnel is minted, so a typo does not quietly send nothing. `LIBTUNNEL_TOKEN` outranks all of it. |
 
@@ -1074,7 +1074,7 @@ then what the run shares, said as a sentence, and each address and what it
 reaches:
 
 ```
-🍕 tunneld is now running in the background
+🚇 tunneld is now running in the background
 
     cwd  ~/project
     pid  73146
@@ -1113,7 +1113,7 @@ while `-d` is waiting ends the run, since nothing has been handed back yet.
 again is refused (see [The npm launcher](#the-npm-launcher), "The same run
 twice"). Under `-d` the pid it was refused for comes back, and that run is
 handed back the way this one would have been: its addresses on stdout, the
-summary on stderr, headed "🍕 tunneld is already running in the background",
+summary on stderr, headed "🚇 tunneld is already running in the background",
 exit status 0. With `-s`, the addresses and nothing else. So
 `addr=$(tunneld -d -s :3000)` gives the same address however many times it
 runs. Under `--no-cache` there are no cached settings to read the addresses
@@ -1146,10 +1146,21 @@ the run's cached settings, or its key under `--no-cache`:
 73190  4a1f0c2d9e8b7a65
 ```
 
-With `-s`, the pid and the address alone. A run is one holding its
+With `-s`, it is one JSON array on stdout instead, `[]` for none, for a
+script: each run's `pid` and `key`, then, those it has, its `address`, the
+`addresses` of its origins as a run prints them, its directory as `cwd`, its
+`origins` as settled, and the paths of its settings file, `env`, and its
+`log`. Every path is absolute. The settings file's path, never what it
+holds, since the spec is one of the settings:
+
+```json
+[{"pid":73146,"key":"894bb9b319b7b699","address":"https://0tc62f7m9b.tunneld.domain/","addresses":["https://0tc62f7m9b.tunneld.domain/?0","https://0tc62f7m9b.tunneld.domain/?1"],"cwd":"/Users/me/project","origins":["http://localhost:3000","exec:///bin/bash"],"env":"/Users/me/Library/Caches/tunneld/894bb9b319b7b699.env","log":"/Users/me/Library/Caches/tunneld/894bb9b319b7b699.log"}]
+```
+
+A run is one holding its
 `<key>.pid`'s lock in the cache directory; a file whose lock nobody holds is a
 run that ended without removing it, and is cleared. With none, it says
-"no runs" on stderr.
+"no runs" on stderr, or, with `-s`, `[]`.
 
 ## The npm launcher
 
@@ -1512,7 +1523,7 @@ after construction still lands.
 | -------- | ------- | ------ |
 | `TUNNELD_ORIGINS` | the arguments | Local origins, comma-separated in the order argv would take them. An origin URL containing a literal comma has to arrive as an argument, which is parsed for no separator. |
 | `TUNNELD_NO_CACHE` | `--no-cache` | Whether to skip the spec cache, so every run mints a fresh hostname. Any value `strconv.ParseBool` accepts. |
-| `TUNNELD_CACHE_DIR` | *(no flag)* | The directory a run's cached spec, `.pid` and `.log` go in, directly. Unset, `<user cache dir>/tunneld/`. A spec is credentials, so one inside a checkout is one `git add` can commit. `npx tunneld -k` and `-l` look there too. `make clean` does not remove it. |
+| `TUNNELD_CACHE_DIR` | *(no flag)* | The directory a run's cached spec, `.pid` and `.log` go in, directly; a relative one is resolved against the working directory. Unset, `<user cache dir>/tunneld/`. A spec is credentials, so one inside a checkout is one `git add` can commit. `npx tunneld -k` and `-l` look there too. `make clean` does not remove it. |
 | `TUNNELD_PROVIDER` | `--provider` | Quick-tunnel provider host. |
 | `TUNNELD_LOG` | `--log-level` | Level of the tunnel's stderr logger. Unset, it is silent. The name predates the flag, which is why it is not `TUNNELD_LOG_LEVEL`. |
 | `TUNNELD_MULTIVIEW` | `--multiview` | Whether to serve the multiview panel. Any value `strconv.ParseBool` accepts. |

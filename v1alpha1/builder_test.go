@@ -1492,11 +1492,11 @@ func TestRun(t *testing.T) {
 		}
 	})
 
-	t.Run("-l lists the runs and starts nothing; -s is the pid and address", func(t *testing.T) {
+	t.Run("-l lists the runs and starts nothing; -s is JSON", func(t *testing.T) {
 		runs := []pid.Run{{Pid: 7, Key: "k", Env: map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "PWD": "/work", "TUNNELD_ORIGINS": "http://localhost:3000"}}}
 		for args, want := range map[string]string{
 			"-l":    "7  https://t.example/  /work  http://localhost:3000\n",
-			"-l -s": "7  https://t.example/\n",
+			"-l -s": `[{"pid":7,"key":"k","address":"https://t.example/","addresses":["https://t.example/"],"cwd":"/work","origins":["http://localhost:3000"]}]` + "\n",
 		} {
 			h := newRunHarness(t, live(public), ":3000")
 			v1.Apply(h.b, WithPid(&fakePid{order: &h.order, runs: runs}))
@@ -1511,6 +1511,11 @@ func TestRun(t *testing.T) {
 		v1.Apply(h.b, WithPid(&fakePid{order: &h.order}))
 		if err := h.run(t, t.Context(), "-l"); err != nil || !strings.Contains(h.stderr.String(), "no runs") {
 			t.Errorf("-l with no runs = %v, stderr %q; want it said", err, h.stderr.String())
+		}
+		h = newRunHarness(t, live(public), ":3000")
+		v1.Apply(h.b, WithPid(&fakePid{order: &h.order}))
+		if err := h.run(t, t.Context(), "-l", "-s"); err != nil || h.stdout.String() != "[]\n" || h.stderr.Len() != 0 {
+			t.Errorf("-l -s with no runs = %v, stdout %q, stderr %q; want [] and nothing else", err, h.stdout.String(), h.stderr.String())
 		}
 		h = newRunHarness(t, live(public), ":3000")
 		v1.Apply(h.b, WithPid(&fakePid{order: &h.order}))
@@ -1556,7 +1561,7 @@ func TestRun(t *testing.T) {
 				if h.stdout.String() != tc.stdout {
 					t.Errorf("stdout = %q, want %q", h.stdout.String(), tc.stdout)
 				}
-				if got := h.stderr.String(); (tc.summary == "") != !strings.Contains(got, "🍕") || !strings.Contains(got, tc.summary) {
+				if got := h.stderr.String(); (tc.summary == "") != !strings.Contains(got, "🚇") || !strings.Contains(got, tc.summary) {
 					t.Errorf("stderr = %q, want the summary saying %q", got, tc.summary)
 				}
 			})
