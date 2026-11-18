@@ -587,6 +587,14 @@ func (a *AuthImpl) Unauthorized(w http.ResponseWriter, r *http.Request) {
 	unauthorized(w, challenge)
 }
 
+// providerHost is the provider's host, as the sign-in names it.
+func (a *AuthImpl) providerHost() string {
+	if u, err := url.Parse(a.server()); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return v1.DefaultProvider
+}
+
 // unauthorized is every 401 tunneld sends, the gate's and Unauthorized's: no
 // body, and the challenge it is given.
 func unauthorized(w http.ResponseWriter, challenge string) {
@@ -721,7 +729,7 @@ func (a *AuthImpl) render(w http.ResponseWriter, r *http.Request, status int, p 
 	p.Host = r.Host
 	if p.SSO {
 		p.SignIn = cmp.Or(p.SignIn, signInURL(p.Next, ""))
-		p.Label = cmp.Or(p.Label, "Sign in with tunnel.pizza")
+		p.Label = cmp.Or(p.Label, "Sign in with "+a.providerHost())
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The page is one inline stylesheet, a form posting to itself and a

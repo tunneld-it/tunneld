@@ -155,9 +155,10 @@ type RouterImpl struct {
 	// WithCache has put them on the mux, and the auth in front of the
 	// visitor side. A pointer for the same reason as live.
 	env *env
-	// allowOrigin is the one browser origin CORS answers on .env: the
-	// provider's, which minted the tunnel and holds its secret. "" for none.
-	allowOrigin string
+	// origin is the provider's origin, read on every request: the one
+	// browser origin CORS answers on .env, and the one the unreachable page
+	// credits.
+	origin func() string
 }
 
 // CacheKeyHeader is what every response under the ControlPath carries, a
@@ -204,7 +205,10 @@ func New(opts ...Option) *RouterImpl {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = io.WriteString(w, "pong")
 	})
-	return v1.Apply(&RouterImpl{log: discard, mux: mux, live: &routes{}, env: &env{auth: fallback, cache: cache.None{}}}, opts...)
+	return v1.Apply(&RouterImpl{
+		log: discard, mux: mux, live: &routes{}, env: &env{auth: fallback, cache: cache.None{}},
+		origin: func() string { return ProviderOrigin("") },
+	}, opts...)
 }
 
 // WithOrigins sets the origins to route between, in the operator's order.
@@ -332,17 +336,26 @@ func WithAuth(a auth.Auth) Option {
 	}
 }
 
-// WithAllowOrigin is the one origin CORS answers on .env: the provider's,
-// which minted the tunnel and holds its secret, so the owner's browser on it
-// can PATCH the password with a grant. "" answers none.
-func WithAllowOrigin(origin string) Option {
-	return func(r *RouterImpl) { r.allowOrigin = origin }
+// WithOrigin is where the provider's origin is read from, on every request,
+// so the one --provider settles is the one used: the one origin CORS answers
+// on .env (the provider minted the tunnel and holds its secret, so the
+// owner's browser there can PATCH the password with a grant), and the one
+// the unreachable page credits. Nil keeps the default provider's.
+func WithOrigin(origin func() string) Option {
+	return func(r *RouterImpl) {
+		if origin != nil {
+			r.origin = origin
+		}
+	}
 }
 
-// ProviderOrigin is the browser origin of a provider host as libtunnel reads
-// it: https://<host>, or the scheme and host of a value that carries a
-// scheme already (a dev server, a mock).
+// ProviderOrigin is the browser origin of provider, a host as --provider
+// takes one: https://<host>, or the scheme and host of a value that carries a
+// scheme already (a dev server, a mock). Empty is v1.DefaultProvider.
 func ProviderOrigin(provider string) string {
+	if provider == "" {
+		provider = v1.DefaultProvider
+	}
 	if strings.Contains(provider, "://") {
 		if u, err := url.Parse(provider); err == nil {
 			return u.Scheme + "://" + u.Host
@@ -452,7 +465,7 @@ func (r *RouterImpl) Route(ctx context.Context, opts ...Option) (*url.URL, error
 		http.Error(w, "tunneld: nothing is exposed here yet", http.StatusNotFound)
 	})
 	if origins != nil {
-		site = redirect(origins, logged(route.requests, proxy(origins, site, log)))
+		site = redirect(origins, logged(route.requests, route.proxy(site)))
 		if front != nil && origins.Len() > 0 {
 			site = front(site)
 		}
@@ -710,7 +723,7 @@ func (r *RouterImpl) cors(next http.Handler) http.Handler {
 		}
 		w.Header().Add("Vary", "Origin")
 		provider := false
-		if o := req.Header.Get("Origin"); o != "" && o == r.allowOrigin {
+		if o := req.Header.Get("Origin"); o != "" && o == r.origin() {
 			provider = true
 			w.Header().Set("Access-Control-Allow-Origin", o)
 			w.Header().Set("Access-Control-Expose-Headers", v1.AuthenticateHeader+", Retry-After")
@@ -865,7 +878,9 @@ func (r *RouterImpl) Cancel() {
 // the scope of the origin's own scheme, auth.Scope, whatever address it is
 // dialed at; anything else is
 // auth.InsufficientScope naming it.
-func proxy(origins v1.Origins, empty http.Handler, log *slog.Logger) http.Handler {
+func (r *RouterImpl) proxy(empty http.Handler) http.Handler {
+	// Bound here: below, r is a request.
+	origins, log, provider := r.origins, r.log, r.origin
 	// The origins as they stand, taken again when one is added: the list
 	// only grows, so a request picked against one snapshot routes the same
 	// against the next.
@@ -1107,9 +1122,9 @@ func proxy(origins v1.Origins, empty http.Handler, log *slog.Logger) http.Handle
 				(dest == "" || dest == "document" || dest == "iframe" || dest == "frame") {
 				var page bytes.Buffer
 				err := unreachableTmpl.Execute(&page, struct {
-					Where, Mark string
-					RetryAfter  int
-				}{where, unreachableHeader, retryAfter})
+					Where, Mark, Provider string
+					RetryAfter            int
+				}{where, unreachableHeader, provider(), retryAfter})
 				if err == nil {
 					h.Set("Content-Type", "text/html; charset=utf-8")
 					w.WriteHeader(http.StatusServiceUnavailable)

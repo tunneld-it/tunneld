@@ -199,6 +199,29 @@ func TestSignIn(t *testing.T) {
 			t.Errorf("%d %q, want a 503 page saying tunnel.pizza couldn't be reached", rec.Code, rec.Body)
 		}
 	})
+	t.Run("the provider is named as --provider says", func(t *testing.T) {
+		for _, down := range []bool{false, true} {
+			o := fakeOidc()
+			o.down = down
+			p := New(WithSecret(func() []byte { return []byte("s3cr3t") }), WithOidc(o), WithAuthorizationServer(func() string { return "https://tunneld.it/" }))
+			value := `Basic pw="` + vector + `", ` + ssoValue
+			if down {
+				value = ssoValue
+			}
+			if err := p.Set(value); err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			muxOf(p).ServeHTTP(rec, at("GET", "/_tunneld/login?next=/app"))
+			want := "Sign in with tunneld.it"
+			if down {
+				want = "tunneld.it couldn&#39;t be reached"
+			}
+			if body := rec.Body.String(); !strings.Contains(body, want) || strings.Contains(body, "tunnel.pizza") {
+				t.Errorf("down %v: page %q, want it saying %q and naming no other provider", down, body, want)
+			}
+		}
+	})
 	t.Run("no secret yet", func(t *testing.T) {
 		n := New(WithOidc(fakeOidc()))
 		n.Set(ssoValue)

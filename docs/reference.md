@@ -569,8 +569,10 @@ show there until the tunnel is up, because a container is attached before the
 tunnel exists.
 
 The build along the bottom starts with tunneld's name, and that is a link too,
-to tunnel.pizza, so whoever you sent the address to can find out what is
-serving it. Its query says it came from a frame and which release drew it,
+to the provider (tunnel.pizza, or `--provider`'s), so whoever you sent the
+address to can find out what is serving it. The "nothing is running" page's
+credit links there too, and a sign-in names it: "Sign in with tunneld.it"
+under `--provider=tunneld.it`. Its query says it came from a frame and which release drew it,
 and nothing about the tunnel, the origin or your machine. The page opens every
 link with no `Referer` and no `opener`: the hostname is the tunnel's only
 secret, and a `Referer` would carry it to whatever site a link names.

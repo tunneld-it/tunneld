@@ -718,7 +718,7 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		// issues may PATCH the password, from the provider's origin.
 		router.WithCache(spec),
 		router.WithAuth(b.auth),
-		router.WithAllowOrigin(router.ProviderOrigin(cmp.Or(b.provider, v1.DefaultProvider))),
+		router.WithOrigin(b.origin),
 		router.WithLog(log),
 		router.WithMcp(mcp.New(
 			mcp.WithContext(ctx),

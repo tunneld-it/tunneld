@@ -134,7 +134,7 @@ func signInURL(next, prompt string) string {
 // hostname as the resource (RFC 8707), a fresh state and nonce in the sealed
 // flow cookie. prompt is passed on only as "login".
 func (a *AuthImpl) signIn(w http.ResponseWriter, r *http.Request, s *state, next, prompt string) {
-	unreachable := page{Next: next, Password: s.basic, SSO: true, Error: "tunnel.pizza couldn't be reached. Try again."}
+	unreachable := page{Next: next, Password: s.basic, SSO: true, Error: a.providerHost() + " couldn't be reached. Try again."}
 	key := flowKey(a.secret())
 	if key == nil {
 		w.Header().Set("Retry-After", "2")
@@ -250,7 +250,7 @@ func (a *AuthImpl) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := a.oidc.Endpoints(r.Context())
 	if err != nil {
-		fail(http.StatusServiceUnavailable, "tunnel.pizza couldn't be reached. Try again.")
+		fail(http.StatusServiceUnavailable, a.providerHost()+" couldn't be reached. Try again.")
 		return
 	}
 	if q.Get("iss") != d.Issuer {
@@ -269,7 +269,7 @@ func (a *AuthImpl) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, ErrUnavailable):
-		fail(http.StatusServiceUnavailable, "tunnel.pizza couldn't be reached. Try again.")
+		fail(http.StatusServiceUnavailable, a.providerHost()+" couldn't be reached. Try again.")
 		return
 	case err != nil:
 		fail(http.StatusOK, "Sign-in failed. Try again.")

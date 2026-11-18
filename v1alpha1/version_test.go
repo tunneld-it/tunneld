@@ -89,36 +89,36 @@ func TestVersionLineNamesTheCache(t *testing.T) {
 	}
 }
 
-// TestFrameLineLinksTheNameHome pins the build line every shared terminal
+// TestBannerLinksTheNameHome pins the build line every shared terminal
 // shows along its frame: VersionLine's own words, with tunneld's name, and
-// only the name, marked as a link to tunnel.pizza. The query says a frame
+// only the name, marked as a link to the provider. The query says a frame
 // sent the visit and which release drew it, and nothing else: the tunnel's
 // hostname above all is its only credential, and a link on every shared page
 // is the last place it may go.
-func TestFrameLineLinksTheNameHome(t *testing.T) {
-	line := frameLine()
+func TestBannerLinksTheNameHome(t *testing.T) {
+	line := (&BuilderImpl{provider: "tunneld.it"}).banner()
 	if got, want := ansi.Strip(line), VersionLine(nil); got != want {
-		t.Errorf("frameLine() reads %q, want VersionLine's %q", got, want)
+		t.Errorf("banner() reads %q, want VersionLine's %q", got, want)
 	}
 
 	target, rest, ok := strings.Cut(strings.TrimPrefix(line, "\x1b]8;;"), "\a")
 	if !ok || !strings.HasPrefix(line, "\x1b]8;;") {
-		t.Fatalf("frameLine() = %q, want it opening with a hyperlink", line)
+		t.Fatalf("banner() = %q, want it opening with a hyperlink", line)
 	}
 	if name, _, _ := strings.Cut(rest, ansi.ResetHyperlink()); name != "tunneld" {
-		t.Errorf("frameLine() links %q, want tunneld's name alone", name)
+		t.Errorf("banner() links %q, want tunneld's name alone", name)
 	}
 
 	home, err := url.Parse(target)
 	if err != nil {
 		t.Fatalf("parsing the link %q: %v", target, err)
 	}
-	if home.Scheme != "https" || home.Host != "tunnel.pizza" || home.Path != "/" {
-		t.Errorf("frameLine() links %s, want https://tunnel.pizza/", home)
+	if home.Scheme != "https" || home.Host != "tunneld.it" || home.Path != "/" {
+		t.Errorf("banner() links %s, want the provider, https://tunneld.it/", home)
 	}
 	want := url.Values{"utm_source": {"tunneld"}, "utm_medium": {"frame"}, "utm_term": {Version()}}
 	if got := home.Query(); !maps.EqualFunc(got, want, slices.Equal) {
-		t.Errorf("frameLine() links with the query %v, want exactly %v", got, want)
+		t.Errorf("banner() links with the query %v, want exactly %v", got, want)
 	}
 }
 

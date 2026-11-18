@@ -7,7 +7,6 @@
 package v1alpha1
 
 import (
-	"cmp"
 	"context"
 	"io"
 	"net/url"
@@ -232,8 +231,12 @@ func (b *BuilderImpl) owner() string {
 // discovery and tokens name. What the default auth names as the server a
 // token for this tunnel comes from.
 func (b *BuilderImpl) authorizationServer() string {
-	return router.ProviderOrigin(cmp.Or(b.provider, v1.DefaultProvider)) + "/"
+	return b.origin() + "/"
 }
+
+// origin is the provider's origin, https://<host>: --provider's, else the
+// default's.
+func (b *BuilderImpl) origin() string { return router.ProviderOrigin(b.provider) }
 
 // WithRun replaces what takes a run's tunnel from its spec to its end. The
 // default is run.New().
@@ -318,7 +321,7 @@ func New(opts ...Option) *BuilderImpl {
 			attach.WithTargets(docker.New(), shell.New()),
 			attach.WithHold(),
 			// Built here, before a flag has been parsed: no run to name yet.
-			attach.WithBanner(frameLine()),
+			attach.WithBanner(b.banner),
 			attach.WithLogs(log),
 			attach.WithMotd(board),
 		)),
