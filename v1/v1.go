@@ -235,11 +235,15 @@ const (
 	// fresh one, which is what somebody wants when a hostname must not be
 	// reused.
 	//
-	// Where the file goes is not configurable from the environment: a spec is
-	// credentials, and the directory that holds them is the machine's own
-	// answer rather than a run's. An embedding program that needs another one
-	// passes v1alpha1.WithCacheDir.
+	// Where the file goes is CacheDirEnv's.
 	NoCacheEnv = "TUNNELD_NO_CACHE"
+
+	// CacheDirEnv names the directory a run's files go in: its cached spec,
+	// its .pid and its log, directly in it. Unset, they go in tunneld under
+	// the user's cache directory. A spec is credentials, so a directory inside
+	// a checkout is one git can commit. An embedding program's
+	// v1alpha1.WithCacheDir beats it, for the spec.
+	CacheDirEnv = "TUNNELD_CACHE_DIR"
 
 	// MultiviewEnv names whether to serve the multiview panel — the mirror of
 	// --multiview, which beats it. Any value strconv.ParseBool accepts works.

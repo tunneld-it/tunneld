@@ -29,6 +29,7 @@ Deep-link by filename; line numbers will drift.
 | The MCP server served to agents on the control path | [`v1alpha1/mcp/`](./v1alpha1/mcp) |
 | What every MCP tool shares, what each answers and how it refuses, and one package per tool | [`v1alpha1/mcp/tool/`](./v1alpha1/mcp/tool), [`v1alpha1/mcp/types/`](./v1alpha1/mcp/types), [`v1alpha1/mcp/errors/`](./v1alpha1/mcp/errors) and its [`refusals/`](./v1alpha1/mcp/errors/refusals), [`v1alpha1/mcp/tools/`](./v1alpha1/mcp/tools) |
 | An MCP run's stdout held for its client alone: fd 1 copied for the transport, pointed at stderr | [`v1alpha1/util/stdioutil/`](./v1alpha1/util/stdioutil) |
+| Where a run's spec, `.pid` and `.log` go: `$TUNNELD_CACHE_DIR`, else `<user cache dir>/tunneld` | [`v1alpha1/util/cacheutil/`](./v1alpha1/util/cacheutil) |
 | Experiments: the only way in to what lives under `v0exp1/internal/` | [`v0exp1/v0exp1.go`](./v0exp1/v0exp1.go) |
 | The shell built in for a machine with none (Elvish), and the commands it brings (u-root) | [`v0exp1/internal/shell/builtin/`](./v0exp1/internal/shell/builtin) |
 | Ring of tunneld's own log lines (`logs.Log`)   | [`v1alpha1/logs/`](./v1alpha1/logs)                             |
@@ -1043,13 +1044,12 @@ Don't commit secrets. [`.gitignore`](./.gitignore) covers `.env*`, `.claude/`,
 `*.local`, etc. Keep the `*.local` line broad rather than narrowing it to
 names.
 
-The cached tunnel spec needs no entry, and used to. It is credentials, and it
-lands under the user's own cache directory — `<user cache dir>/tunneld/` —
-which no flag and no variable can point at a checkout: `--cache-dir` is gone,
-and the only lever left is `v1alpha1.WithCacheDir`, which an embedding program
-passes in code. A spec cannot arrive in the tree for `git add -A` to commit, so
-there is nothing here to ignore. `make clean` removes the whole cache
-directory, along with the compose example's volume and the local image.
+The cached tunnel spec needs no entry. It is credentials, and it lands under
+the user's own cache directory, `<user cache dir>/tunneld/`, unless
+`TUNNELD_CACHE_DIR` names another one (in code, `v1alpha1.WithCacheDir`).
+Don't point either at this checkout. `make clean` removes the default cache
+directory, along with the compose example's volume and the local image, and
+leaves a `TUNNELD_CACHE_DIR` alone.
 
 ## Pull requests
 

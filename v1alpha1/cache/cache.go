@@ -38,20 +38,13 @@ import (
 	"github.com/spf13/viper"
 	v1 "github.com/tunnel-pizza/tunneld/v1"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/auth"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/util/cacheutil"
 )
 
 // ext is what a cache file is called after its key. The contents are a file of
 // environment variables, so the extension says what it is to whoever opens the
 // directory.
 const ext = ".env"
-
-// dirName is the one directory every cached spec lives in, under the user's
-// own cache directory. Flat: what identifies a tunnel is in the filename, so
-// nesting would only add a level saying the same thing twice.
-//
-// Undotted, like every neighbour it sits among: a cache directory is not a
-// place anybody browses by accident, so hiding one inside it hides nothing.
-const dirName = "tunneld"
 
 // Cache persists a tunnel's spec between runs, filed under the name the
 // origins give it.
@@ -210,9 +203,7 @@ func New(opts ...Option) *CacheImpl {
 		now:      time.Now,
 		auth:     auth.New(),
 	}
-	if base, err := os.UserCacheDir(); err == nil {
-		c.dir = filepath.Join(base, dirName)
-	}
+	c.dir = cacheutil.Dir()
 	return v1.Apply(c, opts...)
 }
 

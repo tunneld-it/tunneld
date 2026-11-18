@@ -385,6 +385,7 @@ func TestTheDefaultDirectoryIsUnderTheUsersCache(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("LocalAppData", base)
+	t.Setenv(v1.CacheDirEnv, "")
 
 	want, err := os.UserCacheDir()
 	if err != nil {
@@ -397,6 +398,24 @@ func TestTheDefaultDirectoryIsUnderTheUsersCache(t *testing.T) {
 	path := filepath.Join(want, "tunneld", o.Key()+ext)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("want the spec at %s: %v", path, err)
+	}
+}
+
+// TestTheDirectoryFromTheEnvironment pins TUNNELD_CACHE_DIR: a spec lands
+// directly in the directory it names, and WithDir still beats it.
+func TestTheDirectoryFromTheEnvironment(t *testing.T) {
+	moved := filepath.Join(t.TempDir(), "volume")
+	t.Setenv(v1.CacheDirEnv, moved)
+	o := run(t, "http://localhost:3000")
+	cache.New().Save(cache.WithOrigins(o), cache.WithSpec(envelope), cache.WithLog(discard()))
+	if _, err := os.Stat(filepath.Join(moved, o.Key()+ext)); err != nil {
+		t.Fatalf("want the spec in %s: %v", moved, err)
+	}
+
+	given := t.TempDir()
+	cache.New(cache.WithDir(given)).Save(cache.WithOrigins(o), cache.WithSpec(envelope), cache.WithLog(discard()))
+	if _, err := os.Stat(filepath.Join(given, o.Key()+ext)); err != nil {
+		t.Fatalf("want WithDir's directory to beat the variable: %v", err)
 	}
 }
 

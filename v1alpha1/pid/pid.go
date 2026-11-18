@@ -18,12 +18,8 @@ import (
 	"strings"
 
 	v1 "github.com/tunnel-pizza/tunneld/v1"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/util/cacheutil"
 )
-
-// dirName is the directory under the user's cache directory, the one the
-// spec cache files into, so a run's three files — spec, pid, log — sit
-// together under one name.
-const dirName = "tunneld"
 
 // errLocked is what lock returns when another process holds the lock.
 var errLocked = errors.New("locked by another process")
@@ -72,9 +68,7 @@ func New(opts ...Option) *PidImpl {
 	}
 	os.Unsetenv(v1.NotifyPidEnv)
 	os.Unsetenv(v1.StatusFdEnv)
-	if base, err := os.UserCacheDir(); err == nil {
-		p.dir = filepath.Join(base, dirName)
-	}
+	p.dir = cacheutil.Dir()
 	return v1.Apply(p, opts...)
 }
 

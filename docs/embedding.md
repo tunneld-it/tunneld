@@ -83,7 +83,7 @@ func NewOrigin(u *url.URL) Origin           // u as an origin: its scheme, provi
 func WithName(name string) Option                  // command name; default "tunneld"
 func WithOrigin(origins ...string) Option          // origins, in order; appends across options
 func WithProvider(host string) Option              // quick-tunnel host; default tunnel.pizza
-func WithCacheDir(dir string) Option               // cache specs here instead of the user's cache directory
+func WithCacheDir(dir string) Option               // cache specs here instead of the user's cache directory; beats TUNNELD_CACHE_DIR
 func WithLogLevel(level string) Option             // debug|info|warn|error on stderr
 func WithIdentityProviders(names ...string) Option // where to look for a mint credential; default github
 func WithOpen(open bool) Option                    // force the browser decision; unset means derived

@@ -956,7 +956,7 @@ func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 // detect no origins, and a developer's TUNNELD_MCP or debugEnv would reach
 // every run.
 func TestMain(m *testing.M) {
-	for _, env := range append(slices.Clone(agentEnv), v1.MCPEnv, debugEnv) {
+	for _, env := range append(slices.Clone(agentEnv), v1.MCPEnv, v1.CacheDirEnv, debugEnv) {
 		os.Unsetenv(env)
 	}
 	os.Exit(m.Run())
