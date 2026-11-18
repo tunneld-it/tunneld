@@ -290,12 +290,15 @@ function ambiguous(reading, prefix) {
   );
 }
 
-// cacheDir is <user cache dir>/tunneld, the binary's own: Go's
-// os.UserCacheDir, spelled out. Each run registers there as <key>.pid, beside
-// its spec, and logs to <key>.log, which the binary writes and this only
-// names.
+// cacheDir is the binary's own: $TUNNELD_CACHE_DIR when set, else
+// <user cache dir>/tunneld, Go's os.UserCacheDir spelled out. Each run
+// registers there as <key>.pid, beside its spec, and logs to <key>.log, which
+// the binary writes and this only names.
 function cacheDir() {
   const env = process.env;
+  if (env.TUNNELD_CACHE_DIR) {
+    return path.resolve(env.TUNNELD_CACHE_DIR);
+  }
   let base;
   switch (process.platform) {
     case "darwin":

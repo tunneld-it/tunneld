@@ -40,6 +40,7 @@ import (
 	"time"
 
 	v1 "github.com/tunnel-pizza/tunneld/v1"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/util/cacheutil"
 )
 
 // DefaultLines is how many lines the ring keeps. Enough to cover a tunnel
@@ -55,10 +56,6 @@ const maxFile = 16 << 20
 // maxPending bounds what is held for the file before it is opened: the run's
 // first moments, not a process that never names a key.
 const maxPending = 1 << 20
-
-// dirName is the directory under the user's cache directory, the one the spec
-// cache files into, so a run's spec, pid and log sit together under one name.
-const dirName = "tunneld"
 
 // Log is a run's own logging: one logger from New on, and where its lines go.
 //
@@ -123,9 +120,7 @@ type LogImpl struct {
 // until To says otherwise.
 func New(opts ...Option) *LogImpl {
 	l := &LogImpl{ring: &ring{max: DefaultLines}, file: &file{}}
-	if base, err := os.UserCacheDir(); err == nil {
-		l.dir = filepath.Join(base, dirName)
-	}
+	l.dir = cacheutil.Dir()
 	v1.Apply(l, opts...)
 	l.logger = slog.New(slog.NewMultiHandler(
 		plain(l.ring, &l.recording),

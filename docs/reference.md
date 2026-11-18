@@ -1029,7 +1029,7 @@ default.**
 
 | Flag | Variable | Effect |
 | ---- | -------- | ------ |
-| `--no-cache` | `TUNNELD_NO_CACHE` | Don't cache the tunnel spec: mint a fresh hostname every run. Cached, it goes to `<user cache dir>/tunneld/<key>.env` — one file per working directory and set of origins, where the key names that pairing and the banner prints it. Never the working directory: a spec is credentials, and a checkout is the one place they must not land. Where it goes is not configurable from a flag; an embedding program passes `v1alpha1.WithCacheDir`. |
+| `--no-cache` | `TUNNELD_NO_CACHE` | Don't cache the tunnel spec: mint a fresh hostname every run. Cached, it goes to `<user cache dir>/tunneld/<key>.env` — one file per working directory and set of origins, where the key names that pairing and the banner prints it. Never the working directory by default: a spec is credentials, and a checkout is the one place they must not land. `TUNNELD_CACHE_DIR` moves it, with the run's `.pid` and `.log`, and has no flag; an embedding program's `v1alpha1.WithCacheDir` beats it. |
 | `--provider` | `TUNNELD_PROVIDER` | Quick-tunnel provider host to mint against. Default `tunnel.pizza`. |
 | `--log-level` | `TUNNELD_LOG` | `debug`\|`info`\|`warn`\|`error` on stderr. Default silent. The run's log file and the terminal's log view keep info and above regardless, and debug too when this asks for it; see [Logs](#logs). |
 | `--multiview` | `TUNNELD_MULTIVIEW` | Answer the tunnel's own address with a panel framing every origin. **Default on**, and inert with a single origin, which keeps the bare address for itself. |
@@ -1498,6 +1498,7 @@ after construction still lands.
 | -------- | ------- | ------ |
 | `TUNNELD_ORIGINS` | the arguments | Local origins, comma-separated in the order argv would take them. An origin URL containing a literal comma has to arrive as an argument, which is parsed for no separator. |
 | `TUNNELD_NO_CACHE` | `--no-cache` | Whether to skip the spec cache, so every run mints a fresh hostname. Any value `strconv.ParseBool` accepts. |
+| `TUNNELD_CACHE_DIR` | *(no flag)* | The directory a run's cached spec, `.pid` and `.log` go in, directly. Unset, `<user cache dir>/tunneld/`. A spec is credentials, so one inside a checkout is one `git add` can commit. `npx tunneld -k` and `-l` look there too. `make clean` does not remove it. |
 | `TUNNELD_PROVIDER` | `--provider` | Quick-tunnel provider host. |
 | `TUNNELD_LOG` | `--log-level` | Level of the tunnel's stderr logger. Unset, it is silent. The name predates the flag, which is why it is not `TUNNELD_LOG_LEVEL`. |
 | `TUNNELD_MULTIVIEW` | `--multiview` | Whether to serve the multiview panel. Any value `strconv.ParseBool` accepts. |

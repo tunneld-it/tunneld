@@ -111,8 +111,8 @@ func WithCache(c Cache) Option {
 // cache that puts it there. An embedder wanting more than the directory
 // reaches the same lever with cache.New and its own options.
 //
-// There is no flag and no variable behind this. A spec is credentials, and
-// which directory holds them is the machine's answer rather than a run's.
+// It beats v1.CacheDirEnv, which sets the same directory from the
+// environment.
 func WithCacheDir(dir string) Option {
 	return WithCache(cache.New(cache.WithDir(dir)))
 }

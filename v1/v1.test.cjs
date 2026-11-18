@@ -239,6 +239,7 @@ function pkg(t) {
     RUNNER: String(process.pid),
   };
   delete env.TUNNELD_NOTIFY_PID;
+  delete env.TUNNELD_CACHE_DIR;
   env.CACHE =
     process.platform === "darwin" ? path.join(home, "Library", "Caches", "tunneld") : path.join(home, ".cache", "tunneld");
 
@@ -534,6 +535,20 @@ test("-l lists every run, one line each", posixOnly, async (t) => {
   );
   assert.equal(launch("-l", ":3000").stderr, "tunneld: -l takes no arguments: it lists every run\n");
   assert.equal(launch("-k").status, 0);
+});
+
+test("-l and -k find runs in $TUNNELD_CACHE_DIR", posixOnly, async (t) => {
+  const { launch, start, env, root } = pkg(t);
+  const moved = path.join(root, "volume");
+  env.TUNNELD_CACHE_DIR = moved;
+  env.CACHE = moved;
+  const run = start(":3000");
+  t.after(() => run.kill("SIGKILL"));
+  await until(() => pids(moved).length === 1);
+
+  assert.match(launch("-l").stdout, /^\d+  https:\/\/t\.example\/  /m);
+  assert.equal(launch("-k").status, 0);
+  await until(() => pids(moved).length === 0);
 });
 
 test("-k takes no arguments", posixOnly, (t) => {
