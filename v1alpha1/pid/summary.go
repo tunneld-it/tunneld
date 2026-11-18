@@ -150,11 +150,12 @@ type listed struct {
 // ListJSON prints every run on w as one JSON array, [] for none: each run's
 // pid and key, then its address, the address of each origin, its directory
 // and origins from its cached settings, and the paths of its settings and log,
-// those it has, every path absolute.
+// those it has: cwd as the run recorded it, its own working directory, and
+// the paths of its files made absolute.
 func ListJSON(w io.Writer, runs []Run) error {
 	out := make([]listed, 0, len(runs))
 	for _, r := range runs {
-		l := listed{Pid: r.Pid, Key: r.Key, Cwd: absolute(r.Env["PWD"]), Origins: split(r.Env["TUNNELD_ORIGINS"]), Env: absolute(r.EnvPath), Log: absolute(r.LogPath)}
+		l := listed{Pid: r.Pid, Key: r.Key, Cwd: r.Env["PWD"], Origins: split(r.Env["TUNNELD_ORIGINS"]), Env: absolute(r.EnvPath), Log: absolute(r.LogPath)}
 		if host := r.Env["LIBTUNNEL_HOSTNAME"]; host != "" {
 			l.Address = "https://" + host + "/"
 			l.Addresses = Addresses(r)

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	v1 "github.com/tunnel-pizza/tunneld/v1"
+	"golang.org/x/sys/unix"
 )
 
 // standIn is a program playing the run Background starts: it does what body
@@ -41,7 +42,7 @@ exec sleep 30`)
 		if err := syscall.Kill(s.Pid, 0); err != nil {
 			t.Errorf("the run is not running after Background returned: %v", err)
 		}
-		if sid, err := syscall.Getsid(s.Pid); err != nil || sid != s.Pid {
+		if sid, err := unix.Getsid(s.Pid); err != nil || sid != s.Pid {
 			t.Errorf("the run's session = %d, %v; want one of its own, %d", sid, err, s.Pid)
 		}
 	})

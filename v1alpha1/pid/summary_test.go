@@ -14,6 +14,9 @@ import (
 // shares, wrapped, and where each origin answers; the multiview line with a
 // panel; less with no cached settings; already for a run that was going.
 func TestSummary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("paths spelled with / and quoting for a POSIX shell")
+	}
 	t.Setenv("HOME", "/home/me")
 	for name, tc := range map[string]struct {
 		run     Run
@@ -146,6 +149,9 @@ func TestAddresses(t *testing.T) {
 // TestList pins -l's lines: the pid padded to the widest, then the address,
 // directory and origins, or the key with no settings.
 func TestList(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("paths spelled with / and quoting for a POSIX shell")
+	}
 	t.Setenv("HOME", "/home/me")
 	runs := []Run{
 		{Pid: 7, Key: "_3000_bash", Env: map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "PWD": "/home/me/project", "TUNNELD_ORIGINS": "exec:///bin/bash?arg=-l"}},
@@ -161,8 +167,10 @@ func TestList(t *testing.T) {
 // TestListJSON pins -l -s: one JSON array, [] for none, each run its pid and
 // key and what its settings and log give, never its spec.
 func TestListJSON(t *testing.T) {
+	dir := t.TempDir()
+	env, log := filepath.Join(dir, "k.env"), filepath.Join(dir, "k.log")
 	runs := []Run{
-		{Pid: 7, Key: "k", EnvPath: "/c/k.env", LogPath: "/c/k.log", Env: map[string]string{
+		{Pid: 7, Key: "k", EnvPath: env, LogPath: log, Env: map[string]string{
 			"LIBTUNNEL_SPEC": `{"secret":"s3cret"}`, "LIBTUNNEL_HOSTNAME": "t.example", "PWD": "/work",
 			"TUNNELD_ORIGINS": "http://localhost:3000,exec:///bin/bash?arg=-l",
 		}},
@@ -172,9 +180,13 @@ func TestListJSON(t *testing.T) {
 	if err := ListJSON(&b, runs); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"pid":7,"key":"k","address":"https://t.example/","addresses":["https://t.example/?0","https://t.example/?1"],"cwd":"/work","origins":["http://localhost:3000","exec:///bin/bash?arg=-l"],"env":"/c/k.env","log":"/c/k.log"},{"pid":12345,"key":"__no_cache__4000"}]` + "\n"
+	quoted := func(s string) string { q, _ := json.Marshal(s); return string(q) }
+	want := `[{"pid":7,"key":"k","address":"https://t.example/","addresses":["https://t.example/?0","https://t.example/?1"],"cwd":"/work","origins":["http://localhost:3000","exec:///bin/bash?arg=-l"],"env":` + quoted(env) + `,"log":` + quoted(log) + `},{"pid":12345,"key":"__no_cache__4000"}]` + "\n"
 	if b.String() != want {
 		t.Errorf("ListJSON =\n%s\nwant\n%s", b.String(), want)
+	}
+	if strings.Contains(b.String(), "s3cret") {
+		t.Errorf("ListJSON carries the spec: %s", b.String())
 	}
 	b.Reset()
 	if err := ListJSON(&b, nil); err != nil || b.String() != "[]\n" {
@@ -201,7 +213,7 @@ func TestLabel(t *testing.T) {
 	}
 }
 
-// TestListJSONPathsAreAbsolute pins every path -l -s prints as absolute,
+// TestListJSONPathsAreAbsolute pins the paths of a run's files as absolute,
 // whatever directory the registry was named by.
 func TestListJSONPathsAreAbsolute(t *testing.T) {
 	t.Chdir(t.TempDir())
@@ -209,11 +221,11 @@ func TestListJSONPathsAreAbsolute(t *testing.T) {
 	if err := ListJSON(&b, []Run{{Pid: 7, Key: "k", EnvPath: "cache/k.env", LogPath: "cache/k.log", Env: map[string]string{"PWD": "/work"}}}); err != nil {
 		t.Fatal(err)
 	}
-	var got []struct{ Cwd, Env, Log string }
+	var got []struct{ Env, Log string }
 	if err := json.Unmarshal([]byte(b.String()), &got); err != nil || len(got) != 1 {
 		t.Fatalf("ListJSON = %s, %v", b.String(), err)
 	}
-	for name, p := range map[string]string{"cwd": got[0].Cwd, "env": got[0].Env, "log": got[0].Log} {
+	for name, p := range map[string]string{"env": got[0].Env, "log": got[0].Log} {
 		if !filepath.IsAbs(p) {
 			t.Errorf("%s = %q, want an absolute path", name, p)
 		}

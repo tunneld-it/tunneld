@@ -52,7 +52,9 @@ func (p *PidImpl) Runs() ([]Run, error) {
 }
 
 // holder is the pid a run holding path's lock wrote there, and whether one
-// holds it. A file nobody holds is removed, under the lock taken to find out.
+// holds it. A file nobody holds is removed, under the lock taken to find out
+// where the system allows it; Windows will not delete a file held open, so
+// there it goes after the close, and only if it still says what it said.
 func holder(path string) (int, bool) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
@@ -60,7 +62,13 @@ func holder(path string) (int, bool) {
 	}
 	defer f.Close()
 	if err := lock(f); err == nil {
-		_ = os.Remove(path)
+		body, _ := os.ReadFile(path)
+		if os.Remove(path) != nil {
+			f.Close()
+			if now, err := os.ReadFile(path); err == nil && string(now) == string(body) {
+				_ = os.Remove(path)
+			}
+		}
 		return 0, false
 	} else if !errors.Is(err, errLocked) {
 		return 0, false
