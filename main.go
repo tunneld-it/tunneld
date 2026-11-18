@@ -39,12 +39,13 @@ func main() {
 	// back by the npm launcher is this binary's, not every program's that
 	// embeds the builder: it is how npx tunneld -k and -d reach a run.
 	if err := v1alpha1.New(v1alpha1.WithPid(pid.New())).Command().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "tunneld: "+err.Error())
 		// An ExitError exits with its Code: a refused run, or the status the
 		// programs a run started ended with.
-		if exit := (v1.ExitError{}); errors.As(err, &exit) {
-			os.Exit(exit.Code)
+		exit := v1.ExitError{Code: 1}
+		errors.As(err, &exit)
+		if !exit.Quiet {
+			fmt.Fprintln(os.Stderr, "tunneld: "+err.Error())
 		}
-		os.Exit(1)
+		os.Exit(exit.Code)
 	}
 }

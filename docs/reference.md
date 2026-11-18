@@ -15,7 +15,7 @@ For embedding tunneld in a Go program, see [embedding.md](./embedding.md).
 - [Multiview](#multiview)
 - [Output contract](#output-contract)
 - [The browser](#the-browser)
-- [Flags](#flags), [The npm launcher](#the-npm-launcher), [Logs](#logs) and [Environment](#environment)
+- [Flags](#flags), [In the background](#in-the-background), [The npm launcher](#the-npm-launcher), [Logs](#logs) and [Environment](#environment)
 - [Running in a container](#running-in-a-container)
 
 ## Origins
@@ -1036,6 +1036,8 @@ default.**
 | `--qr` | `TUNNELD_QR` | Print the address as a QR code on stderr once the tunnel is up, beneath the origins it reaches, and open no browser tab (an embedding program's `WithOpen(true)` still opens one): the one address a browser would open, the panel when there is one, so one code however many origins. Plain half-block text with no escapes, light modules drawn, so it reads right on a dark terminal; on a light one it is inverted, which many cameras still read. Error correction is level M, which recovers about 15% of a code where the frame's level L recovers 7%, for a code that is text and may be copied on its way to a phone; for the addresses tunnel.pizza mints the two are the same size. Not printed when the console is about to draw a frame, where `Ctrl+K` then `r` is the code. **Default off.** |
 | `--mcp` | `TUNNELD_MCP` | Serve MCP on stdin and stdout, for the MCP client that started the run: a plugin's stdio server. stdout then carries JSON-RPC and nothing else, so the addresses a run would print there go to stderr, as does whatever else writes to stdout while it runs: a library, or a program the run starts, and a pipe on stdin is the client's rather than a `kubectl debug -i` session's, so no line on it stops the run: the client closing it does, as a signal would, once that client has sent something on it. A stdin that closes with nothing ever sent (`/dev/null`, or one closed from the start) has no client on it, and the run keeps serving MCP over HTTP. The tunnel's MCP server at `/_tunneld/mcp` is there either way. **Default off.** |
 | `-s`, `--silent` | `TUNNELD_SILENT` | Print only the address on stdout, once the tunnel is up, and none of tunneld's own lines on stderr: no banner, origin lines, spinner or stop hint, and no frame or tab. Errors, logs, a program's output and `--qr` still reach stderr. See [Output contract](#output-contract). **Default off.** |
+| `-d`, `--detach` | `TUNNELD_DETACH` | Run in the background: the run is started again in a session of its own, and the prompt comes back once its address is out, with a summary on stderr (none with `-s`). The same run already going is handed back instead. Not on Windows. See [In the background](#in-the-background). **Default off.** |
+| `-l`, `--list` | `TUNNELD_LIST` | List the runs registered on this machine, a line each, and exit; with `-s`, each run's pid and address alone. Takes no origins. See [In the background](#in-the-background). **Default off.** |
 | `--preflight` | `TUNNELD_PREFLIGHT` | Check every network path a tunnel depends on, say which route a run would take, and exit; mints nothing and opens no tunnel. See [Preflight](#preflight). **Default off.** |
 | `--identity-providers` | `TUNNELD_IDENTITY_PROVIDERS` | Identity providers to find a mint credential with, all asked at once, the first in the list to find one winning. **Default `github,anthropic`**: `gh auth token` and then the GitHub environment variables, then a Claude Code workspace's OAuth token. Empty sends no credential. A name with no provider behind it is an error before the tunnel is minted, so a typo does not quietly send nothing. `LIBTUNNEL_TOKEN` outranks all of it. |
 
@@ -1054,23 +1056,20 @@ docker run -e TUNNELD_ORIGINS=http://host.docker.internal:3000,http://host.docke
 A subcommand's name is read as the subcommand, not as a program: to expose a
 program called `version`, spell it `exec:///path/to/version`.
 
-`-d`, `-k` and `-l` are not tunneld's and never will be: they are the npm
-launcher's, below, and the binary refuses them as unknown flags like any
-other, so `tunneld -d` and `npx tunneld -d` cannot come to mean two things.
+`-k` is not tunneld's: it is the npm launcher's, below, and the binary
+refuses it as an unknown flag like any other, so `tunneld -k` and
+`npx tunneld -k` cannot come to mean two things. `-d` and `-l` are the
+binary's; see [In the background](#in-the-background).
 
-## The npm launcher
+## In the background
 
-`npx tunneld` runs a small Node launcher, `v1/v1.cjs`, that finds the binary
-for the machine and hands it the command line. Everything above is the
-binary's. The launcher adds a few things of its own.
-
-**`-d` detaches.** As the first word, and only there, it starts the run in the
-background, on the caller's own stdout and stderr, and waits for the run to
-say it is up. The banner, the addresses, the origin each reaches and, with
-`--qr`, the code arrive exactly as a foreground run's would. Then the run
-caches its settings, points its stdout and stderr at its log file (see
-[Logs](#logs)), and signals the launcher, which gives the prompt back with a
-summary read from the files beside it — the directory, the pid and the log,
+**`-d` detaches.** `-d`, `--detach` or `TUNNELD_DETACH` starts the run again
+in a session of its own, on the caller's stdout and stderr with `/dev/null`
+for stdin, and waits for it to say it is up. The banner, the addresses, the
+origin each reaches and, with `--qr`, the code arrive exactly as a foreground
+run's would. Then the run caches its settings, points its stdout and stderr at
+its log file (see [Logs](#logs)), and signals, and the prompt comes back with
+a summary read from the files beside it: the directory, the pid and the log,
 then what the run shares, said as a sentence, and each address and what it
 reaches:
 
@@ -1092,47 +1091,71 @@ reaches:
 
 One origin reads "Your application (/bin/bash) is now available, tunneled
 through https://…/, at the following address:", with its one line after. In
-colour on a terminal, unless `NO_COLOR` is set. Under `--no-cache`
-there are no cached settings to read, so it says less: the pid and the log. The addresses are on stdout either way. The tunnel stays up.
-Nothing of the caller's is held after that, so
-`addr=$(npx tunneld -d :3000)` returns with the address, and nothing lands on
-a prompt later. `-d` is stripped before the binary sees the line, so
-`npx tunneld -d :3000 claude` is the run `npx tunneld :3000 claude` would have
-been, minus the console: with no terminal to read from, it draws no frame and
-opens no browser tab.
+colour on a terminal, unless `NO_COLOR` is set. Under `--no-cache` there are
+no cached settings to read, so it says less: the pid and the log. With `-s`
+there is no summary at all: the address on stdout is everything. The
+addresses are on stdout either way, and nothing of the caller's is held after
+that, so `addr=$(tunneld -d -s :3000)` returns with the address, and nothing
+lands on a prompt later. With no terminal to read from, the run draws no frame
+and opens no browser tab.
 
-The signal is `SIGUSR2`, asked for through `TUNNELD_NOTIFY_PID`, which the
-launcher sets to its own pid. A run sends it only to a parent with that pid,
-since `SIGUSR2` ends a process that has not asked for it, and whatever started
-a run is not always the launcher.
+The run started again is the same command line, so `-d` must stay among the
+options: `tunneld -d :3000 claude`. That run is told it is one to signal
+through `TUNNELD_NOTIFY_PID`, the starting process's pid, so it never
+detaches again. It sends `SIGUSR2` only to a parent with that pid, since
+`SIGUSR2` ends a process that has not asked for it.
 
-A run that ends before it is up (a bad origin, a mint that fails, `--help`)
-has already said so on the caller's streams, and its exit status is passed
-on. Ctrl+C while `-d` is waiting ends the run, since nothing has been handed
-back yet.
+A run that ends before it is up (a bad origin, a mint that fails) has already
+said so on the caller's streams, and its exit status is passed on. Ctrl+C
+while `-d` is waiting ends the run, since nothing has been handed back yet.
 
 **`-d` of a run already going hands that run back.** The same run started
-again is refused by the binary (below, "The same run twice"). Under `-d`
-the launcher learns the pid it was refused for, and hands that run back the
-way it would have handed back this one: its addresses on stdout, the summary
-on stderr, headed "🍕 tunneld is already running in the background", exit
-status 0. So `addr=$(npx tunneld -d :3000)` gives the same address however
-many times it runs. Under `--no-cache` there are no cached settings to read
-the addresses from, so stdout is empty.
+again is refused (see [The npm launcher](#the-npm-launcher), "The same run
+twice"). Under `-d` the pid it was refused for comes back, and that run is
+handed back the way this one would have been: its addresses on stdout, the
+summary on stderr, headed "🍕 tunneld is already running in the background",
+exit status 0. With `-s`, the addresses and nothing else. So
+`addr=$(tunneld -d -s :3000)` gives the same address however many times it
+runs. Under `--no-cache` there are no cached settings to read the addresses
+from, so stdout is empty.
 
-The running run comes over a pipe. The launcher opens one on the run's fd 3
-and names it in `TUNNELD_STATUS_FD`. A run takes the pipe only when
-`TUNNELD_NOTIFY_PID` also names its parent. It makes the pipe close-on-exec,
-so no program an origin starts inherits it. A refused run writes one line of
-JSON there, naming the run it was refused for:
+The running run comes over a pipe on the started run's fd 3, named in
+`TUNNELD_STATUS_FD`. A run takes the pipe only when `TUNNELD_NOTIFY_PID` also
+names its parent, and makes it close-on-exec, so no program an origin starts
+inherits it. A refused run writes one line of JSON there, naming the run it was
+refused for:
 
 ```
 {"pid":43697,"env":"/Users/me/Library/Caches/tunneld/894bb9b319b7b699.env","log":"/Users/me/Library/Caches/tunneld/894bb9b319b7b699.log"}
 ```
 
 `env` and `log` are there when the files are. They are paths, not contents:
-the settings file also holds the cached spec, which never leaves it. Every
-run closes the pipe once it has registered.
+the settings file also holds the cached spec, which never leaves it. Every run
+closes the pipe once it has registered.
+
+`-d` needs a run that registers, which the binary's always does and an
+embedding program's does with `v1alpha1.WithPid(pid.New())`. Not on Windows
+yet.
+
+**`-l` lists every run.** `-l`, `--list` or `TUNNELD_LIST`, with no origins.
+A line each on stdout: the pid, then the address, directory and origins from
+the run's cached settings, or its key under `--no-cache`:
+
+```
+73146  https://0tc62f7m9b.tunneld.domain/  ~/project  http://localhost:3000, /bin/bash
+73190  4a1f0c2d9e8b7a65
+```
+
+With `-s`, the pid and the address alone. A run is one holding its
+`<key>.pid`'s lock in the cache directory; a file whose lock nobody holds is a
+run that ended without removing it, and is cleared. With none, it says
+"no runs" on stderr.
+
+## The npm launcher
+
+`npx tunneld` runs a small Node launcher, `v1/v1.cjs`, that finds the binary
+for the machine and hands it the command line. Everything above is the
+binary's, `-d` and `-l` included. The launcher adds two things of its own.
 
 **`-k` ends every run.** As the only word. Every tunneld run on the machine,
 for this user — detached or in the foreground of another terminal, started
@@ -1145,18 +1168,9 @@ pid and key, and exits non-zero if one is still going after 30 seconds.
 It signals runs and nothing else, so a pid that is no run is refused: "no run
 with pid 1234", status 1.
 
-**`-l` lists every run.** As the only word. A line each on stdout: the pid,
-then the address, directory and origins from the run's cached settings, or
-its key under `--no-cache`:
-
-```
-73146  https://0tc62f7m9b.tunneld.domain/  ~/project  http://localhost:3000, /bin/bash
-73190  4a1f0c2d9e8b7a65
-```
-
-One launcher flag at most. Any other first word is the binary's, so
-`-kd` and `-dk` reach it and it refuses them as unknown flags. A restart is
-`npx tunneld -k`, then `npx tunneld -d …`.
+`-k` is the launcher's only flag, and only as the only word. Any other first
+word is the binary's, so `-kd` and `-dk` reach it and it refuses them as
+unknown flags. A restart is `npx tunneld -k`, then `npx tunneld -d …`.
 
 **How `-k` finds a run.** The binary registers every run as `<key>.pid` in the
 cache directory, beside the `<key>.env` its spec is cached in — whether or
@@ -1180,8 +1194,8 @@ tunneld: already running as pid 43697
 tunneld: it is running in the background or another terminal: npx tunneld -k ends it
 ```
 
-That is the foreground. Under `-d` the launcher hands the running one back
-instead, above.
+That is the foreground. Under `-d` the running one is handed back instead
+(see [In the background](#in-the-background)).
 
 Two of them would answer on one hostname, and one ending would take the
 other's registration with it. The kernel drops the lock with the file,
@@ -1195,7 +1209,7 @@ with `v1alpha1.WithPid(pid.New())`. See [embedding.md](./embedding.md).
 `make clean` removes the cache directory, registrations included, so a run
 started before it has to be ended by pid.
 
-None of the flags is offered on Windows yet. Node there can only terminate another
+`-k` is not offered on Windows yet. Node there can only terminate another
 process, which would skip the teardown `-k` exists to run, and a run nothing
 can end cleanly is not one to leave behind.
 
@@ -1506,6 +1520,8 @@ after construction still lands.
 | `TUNNELD_QR` | `--qr` | Whether to print the address as a QR code on stderr. Any value `strconv.ParseBool` accepts. |
 | `TUNNELD_MCP` | `--mcp` | Whether to serve MCP on stdin and stdout. Any value `strconv.ParseBool` accepts. |
 | `TUNNELD_SILENT` | `-s`, `--silent` | Whether to print only the address on stdout, and none of tunneld's own lines on stderr. Any value `strconv.ParseBool` accepts. |
+| `TUNNELD_DETACH` | `-d`, `--detach` | Whether to run in the background, handing the prompt back once the address is out. Any value `strconv.ParseBool` accepts. |
+| `TUNNELD_LIST` | `-l`, `--list` | Whether to list the runs registered on this machine and exit. Any value `strconv.ParseBool` accepts. |
 | `TUNNELD_PREFLIGHT` | `--preflight` | Whether to check the network and exit instead of running. Any value `strconv.ParseBool` accepts. |
 | `HTTP_ORIGIN` | *(no flag)* | Written, never read: set for the programs a run starts to the tunnel's origin, `https://<hostname>`; see [Programs](#programs). |
 | `TUNNELD_OWNER` | *(no flag)* | Written, never read: the tunnel's owner as its latest mint named it; see [The owner](#the-owner). Absent when the mint named nobody. |

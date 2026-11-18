@@ -366,6 +366,12 @@ type BuilderImpl struct {
 	// depends on and exits instead of running. Flag-backed like the rest.
 	preflight bool
 
+	// detach is whether the run is left in the background once it is up,
+	// and list whether the command lists the runs registered instead.
+	// Flag-backed like the rest.
+	detach bool
+	list   bool
+
 	// pid is how the run is found and handed back from outside it, for the
 	// npm launcher; nil, the default, is neither. See WithPid.
 	pid Pid

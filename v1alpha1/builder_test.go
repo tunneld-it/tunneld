@@ -40,6 +40,7 @@ import (
 	"github.com/tunnel-pizza/tunneld/v1alpha1/logs"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/motd"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/origins"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/pid"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/router"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/run"
 	"rsc.io/qr"
@@ -578,7 +579,14 @@ type fakePid struct {
 	// onDetach runs when it is.
 	out      *os.File
 	onDetach func()
+	// launched is what Launched says, and runs what Runs lists.
+	launched bool
+	runs     []pid.Run
 }
+
+func (f *fakePid) Launched() bool { return f.launched }
+
+func (f *fakePid) Runs() ([]pid.Run, error) { return f.runs, nil }
 
 func (f *fakePid) Register(Origins, v1.Logger) (func(), error) {
 	*f.order = append(*f.order, "register")
@@ -956,7 +964,7 @@ func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 // detect no origins, and a developer's TUNNELD_MCP or debugEnv would reach
 // every run.
 func TestMain(m *testing.M) {
-	for _, env := range append(slices.Clone(agentEnv), v1.MCPEnv, v1.CacheDirEnv, debugEnv) {
+	for _, env := range append(slices.Clone(agentEnv), v1.MCPEnv, v1.CacheDirEnv, v1.DetachEnv, v1.ListEnv, debugEnv) {
 		os.Unsetenv(env)
 	}
 	os.Exit(m.Run())
@@ -1481,6 +1489,111 @@ func TestRun(t *testing.T) {
 		}
 		if strings.Contains(h.stderr.String(), "after the detach") {
 			t.Errorf("stderr carried a line logged after the detach:\n%s", h.stderr.String())
+		}
+	})
+
+	t.Run("-l lists the runs and starts nothing; -s is the pid and address", func(t *testing.T) {
+		runs := []pid.Run{{Pid: 7, Key: "k", Env: map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "PWD": "/work", "TUNNELD_ORIGINS": "http://localhost:3000"}}}
+		for args, want := range map[string]string{
+			"-l":    "7  https://t.example/  /work  http://localhost:3000\n",
+			"-l -s": "7  https://t.example/\n",
+		} {
+			h := newRunHarness(t, live(public), ":3000")
+			v1.Apply(h.b, WithPid(&fakePid{order: &h.order, runs: runs}))
+			if err := h.run(t, t.Context(), strings.Fields(args)...); err != nil {
+				t.Fatalf("%s: run() = %v", args, err)
+			}
+			if h.stdout.String() != want || len(h.order) != 0 || len(h.specs) != 0 {
+				t.Errorf("%s: stdout %q, effects %v, minted %q; want %q and nothing else", args, h.stdout.String(), h.order, h.specs, want)
+			}
+		}
+		h := newRunHarness(t, live(public), ":3000")
+		v1.Apply(h.b, WithPid(&fakePid{order: &h.order}))
+		if err := h.run(t, t.Context(), "-l"); err != nil || !strings.Contains(h.stderr.String(), "no runs") {
+			t.Errorf("-l with no runs = %v, stderr %q; want it said", err, h.stderr.String())
+		}
+		h = newRunHarness(t, live(public), ":3000")
+		v1.Apply(h.b, WithPid(&fakePid{order: &h.order}))
+		if err := h.run(t, t.Context(), "-l", ":3000"); err == nil || !strings.Contains(err.Error(), "--list takes no origins") {
+			t.Errorf("-l with an origin = %v, want it refused", err)
+		}
+	})
+
+	t.Run("-d starts the run again in the background and hands back its summary", func(t *testing.T) {
+		running := pid.Run{Pid: 4242, Env: map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "http://localhost:3000"}}
+		for name, tc := range map[string]struct {
+			args    []string
+			status  pid.Status
+			err     error
+			stdout  string
+			summary string
+		}{
+			"up":                {[]string{"-d"}, pid.Status{Pid: 4242}, nil, "", "now running"},
+			"up, silent":        {[]string{"-d", "-s"}, pid.Status{Pid: 4242}, nil, "", ""},
+			"already":           {[]string{"-d"}, pid.Status{Pid: 4242}, v1.ExitError{Code: v1.RunningCode, Err: v1.ErrRunning}, "https://t.example/\n", "already running"},
+			"already, silent":   {[]string{"-d", "-s"}, pid.Status{Pid: 4242}, v1.ExitError{Code: v1.RunningCode, Err: v1.ErrRunning}, "https://t.example/\n", ""},
+			"from the variable": {nil, pid.Status{Pid: 4242}, nil, "", "now running"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				h := newRunHarness(t, live(public), ":3000")
+				v1.Apply(h.b, WithPid(&fakePid{order: &h.order, runs: []pid.Run{running}}))
+				var asked []string
+				was := background
+				background = func(exe string, args, _ []string) (pid.Status, error) {
+					asked = append([]string{exe}, args...)
+					return tc.status, tc.err
+				}
+				t.Cleanup(func() { background = was })
+				if tc.args == nil {
+					t.Setenv(v1.DetachEnv, "1")
+				}
+				if err := h.run(t, t.Context(), tc.args...); err != nil {
+					t.Fatalf("run() = %v", err)
+				}
+				if len(asked) == 0 || len(h.specs) != 0 || len(h.order) != 0 {
+					t.Fatalf("background asked %q, minted %q, effects %v; want it started again and nothing here", asked, h.specs, h.order)
+				}
+				if h.stdout.String() != tc.stdout {
+					t.Errorf("stdout = %q, want %q", h.stdout.String(), tc.stdout)
+				}
+				if got := h.stderr.String(); (tc.summary == "") != !strings.Contains(got, "🍕") || !strings.Contains(got, tc.summary) {
+					t.Errorf("stderr = %q, want the summary saying %q", got, tc.summary)
+				}
+			})
+		}
+	})
+
+	t.Run("a silent run -d started, refused, says nothing of its own", func(t *testing.T) {
+		for _, tc := range []struct {
+			launched, silent, quiet bool
+		}{{true, true, true}, {true, false, false}, {false, true, false}} {
+			h := newRunHarness(t, live(public), ":3000")
+			refusal := v1.ExitError{Code: v1.RunningCode, Err: fmt.Errorf("%w as pid 42", v1.ErrRunning)}
+			v1.Apply(h.b, WithPid(&fakePid{order: &h.order, running: refusal, launched: tc.launched}), WithSilent(tc.silent))
+			err := h.run(t, t.Context())
+			var exit v1.ExitError
+			if !errors.As(err, &exit) || exit.Code != v1.RunningCode || exit.Quiet != tc.quiet {
+				t.Errorf("launched %v, silent %v: run() = %#v, want status 75, quiet %v", tc.launched, tc.silent, err, tc.quiet)
+			}
+		}
+	})
+
+	t.Run("a run a launcher waits on does not detach again", func(t *testing.T) {
+		h := newRunHarness(t, live(public), ":3000")
+		v1.Apply(h.b, WithPid(&fakePid{order: &h.order, launched: true, waiting: true}))
+		was := background
+		background = func(string, []string, []string) (pid.Status, error) {
+			t.Error("the run was started again")
+			return pid.Status{}, nil
+		}
+		t.Cleanup(func() { background = was })
+		ctx, cancel := context.WithCancel(t.Context())
+		h.cache.onSave = cancel
+		if err := h.run(t, ctx, "-d"); err != nil {
+			t.Fatalf("run() = %v", err)
+		}
+		if !slices.Contains(h.order, "register") {
+			t.Errorf("effects %v, want the run itself", h.order)
 		}
 	})
 
@@ -2451,15 +2564,14 @@ func TestFlagsStopAtTheFirstOrigin(t *testing.T) {
 	}
 }
 
-// TestLauncherFlagsAreNotTunnelds pins that -d and -k stay the npm
-// launcher's, which strips them before the binary sees the line. Neither is
-// defined here, so `npx tunneld -d` and `tunneld -d` cannot come to mean two
-// things, and the command knows nothing of them: one that reaches it is an
-// unknown flag like any other, cobra's error, or the error of the command
-// this one is mounted under, which is what an embedding program's own
-// handler expects.
-func TestLauncherFlagsAreNotTunnelds(t *testing.T) {
-	for _, s := range []string{"d", "k"} {
+// TestTheLauncherFlagIsNotTunnelds pins that -k stays the npm launcher's,
+// which takes it before the binary sees the line. It is not defined here, so
+// `npx tunneld -k` and `tunneld -k` cannot come to mean two things, and the
+// command knows nothing of it: one that reaches it is an unknown flag like
+// any other, cobra's error, or the error of the command this one is mounted
+// under, which is what an embedding program's own handler expects.
+func TestTheLauncherFlagIsNotTunnelds(t *testing.T) {
+	for _, s := range []string{"k"} {
 		if f := New().Command().Flags().ShorthandLookup(s); f != nil {
 			t.Errorf("-%s is defined as --%s: it is the npm launcher's", s, f.Name)
 		}
@@ -2470,7 +2582,6 @@ func TestLauncherFlagsAreNotTunnelds(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"-d first", []string{"-d", ":3000"}, "unknown shorthand flag: 'd' in -d"},
 		{"-k", []string{"-k"}, "unknown shorthand flag: 'k' in -k"},
 		{"-kd", []string{"-kd", ":3000"}, "unknown shorthand flag: 'k' in -kd"},
 		{"another", []string{"-z"}, "unknown shorthand flag: 'z' in -z"},
@@ -2492,7 +2603,7 @@ func TestLauncherFlagsAreNotTunnelds(t *testing.T) {
 		for args, want := range map[string]string{
 			"tunneld -z":         "the host's",
 			"tunneld version -z": "the host's",
-			"tunneld -d":         "the host's",
+			"tunneld -k":         "the host's",
 		} {
 			parent.SetArgs(strings.Fields(args))
 			if err := parent.ExecuteContext(t.Context()); err == nil || !strings.Contains(err.Error(), want) {

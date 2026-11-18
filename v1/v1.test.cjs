@@ -4,8 +4,8 @@
 // directly, against a $PATH built for the case. Everything that spawns is
 // driven as npx would drive it: v1.cjs copied into a package tree of its own
 // in a temporary directory, beside a package.json and a stand-in binary in
-// dist/, with $HOME pointed inside that tree so a detached run's records never
-// land in the real cache directory.
+// dist/, with $HOME pointed inside that tree so a run's records never land in the
+// real cache directory.
 
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
@@ -14,10 +14,10 @@ const os = require("node:os");
 const path = require("node:path");
 const { test } = require("node:test");
 
-const { ambiguous, misread, isOrigin, prose, quote } = require("./v1.cjs");
+const { ambiguous, misread, isOrigin, quote } = require("./v1.cjs");
 
 const win = process.platform === "win32";
-const posixOnly = { skip: win && "-d and -k are refused on Windows" };
+const posixOnly = { skip: win && "-k is refused on Windows" };
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tunneld-launcher-"));
@@ -57,25 +57,6 @@ test("isOrigin matches the Go parser's", () => {
   ]) {
     assert.equal(isOrigin(word), want, word);
   }
-});
-
-test("prose says what is shared and where, wrapped to the width it is given", () => {
-  assert.deepEqual(prose("0t09ndffmw.tunneld.domain", ["exec:///bin/bash?arg=-l"], 78), [
-    "  Your application (/bin/bash -l) is now available, tunneled through",
-    "  https://0t09ndffmw.tunneld.domain/, at the following address:",
-  ]);
-  assert.deepEqual(prose("t.example", ["http://localhost:3000", "exec:///bin/bash"], 78), [
-    "  Your applications (http://localhost:3000, /bin/bash) are now available,",
-    "  tunneled through https://t.example/, at the following addresses:",
-  ]);
-  const many = ["http://localhost:3000", "exec:///usr/bin/claude?arg=--resume", "attach://dockerd/web"];
-  for (const columns of [78, 60, 40]) {
-    for (const line of prose("h.example", many, columns)) {
-      assert.ok(line.length <= columns, `${columns}: ${line}`);
-    }
-  }
-  // An address longer than the line gets a line of its own, whole.
-  assert.ok(prose("0t09ndffmw.tunneld.domain", ["exec:///bin/bash"], 30).includes("  https://0t09ndffmw.tunneld.domain/,"));
 });
 
 test("quote spells a word that pastes back as itself", { skip: win && "cmd.exe quoting" }, () => {
@@ -170,9 +151,8 @@ test("ambiguous names both readings, ready to paste", { skip: win && "cmd.exe qu
 // fail before any of it, with the second as its status, and a first word of
 // one dash fails with status 1, the way cobra refuses a flag it does not
 // know. It also exits, without
-// a teardown, once its tree is gone or $RUNNER (the test process) is: a
-// detached one is in a session of its own, which an interrupted or failed run
-// never reaches.
+// a teardown, once its tree is gone or $RUNNER (the test process) is, so an
+// interrupted or failed run never leaves one behind.
 const STAND_IN = `#!/bin/sh
 echo "argv: $*" >&2
 if [ "$1" = fail ]; then echo "no origin" >&2; exit "$2"; fi
@@ -182,15 +162,8 @@ mkdir -p "$CACHE"
 running_pid=$(cat "$CACHE/$key.pid" 2>/dev/null)
 if [ -n "$running_pid" ] && kill -0 "$running_pid" 2>/dev/null; then
   echo "tunneld: already running as pid $running_pid" >&2
-  if [ -n "$TUNNELD_STATUS_FD" ]; then
-    status="{\\"pid\\":$running_pid"
-    [ -f "$CACHE/$key.env" ] && status="$status,\\"env\\":\\"$CACHE/$key.env\\""
-    [ -f "$CACHE/$key.log" ] && status="$status,\\"log\\":\\"$CACHE/$key.log\\""
-    echo "$status}" >&3
-  fi
   exit 75
 fi
-if [ -n "$TUNNELD_STATUS_FD" ]; then exec 3>&-; fi
 exec 9>"$CACHE/$key.pid"
 echo $$ >&9
 echo "up $$" >> "$EVENTS"
@@ -203,12 +176,7 @@ if [ "$1" != --no-cache ]; then
   printf "%s\\n" "LIBTUNNEL_SPEC='{\\"secret\\":1}'" "LIBTUNNEL_HOSTNAME='t.example'" "PWD='$HOME/project'" \\
     "TUNNELD_MULTIVIEW='true'" "TUNNELD_ORIGINS='$ORIGINS'" > "$CACHE/$key.env"
 fi
-if [ -n "$TUNNELD_NOTIFY_PID" ] && [ "$TUNNELD_NOTIFY_PID" = "$PPID" ]; then
-  exec >"$CACHE/$key.log" 2>&1
-  kill -USR2 "$PPID"
-else
-  echo "Press Ctrl+C to stop the tunnel..." >&2
-fi
+echo "Press Ctrl+C to stop the tunnel..." >&2
 while :; do
   { [ -d "$CACHE" ] && kill -0 "$RUNNER"; } 2>/dev/null || exit 0
   sleep 0.05 9>&-
@@ -272,106 +240,12 @@ test("a plain run hands the binary every word and relays its status", posixOnly,
 
 test("a run refused as already running gets what to do about it from the launcher", posixOnly, (t) => {
   const { launch } = pkg(t);
-  for (const args of [["fail", "75"], ["-d", "fail", "75"]]) {
+  for (const args of [["fail", "75"]]) {
     const got = launch(...args);
     assert.equal(got.status, 75, args.join(" "));
     assert.match(got.stderr, /: it is running in the background or another terminal: npx tunneld -k ends it\n/, args.join(" "));
   }
   assert.doesNotMatch(launch("fail", "7").stderr, /-k ends it/);
-});
-
-test("-d hands the console back once the run signals, and -k tears it down", posixOnly, (t) => {
-  const { launch, cache, marker, env } = pkg(t);
-
-  // spawnSync reads the launcher's streams to the end, the way $(…) does: it
-  // returns only if the run has let go of them too.
-  const up = launch("-d", ":3000", "bash");
-  assert.equal(up.status, 0, up.stderr);
-  assert.equal(up.stdout, "https://t.example/?0\nhttps://t.example/?1\n");
-  const pid = Number(up.stderr.match(/^    pid  (\d+)$/m)[1]);
-  assert.equal(
-    up.stderr.replaceAll(`~${cache.slice(env.HOME.length)}`, "<cache>"),
-    [
-      "argv: :3000 bash",
-      "  -> :3000",
-      "  -> bash",
-      "",
-      "🍕 tunneld is now running in the background",
-      "",
-      "    cwd  ~/project",
-      `    pid  ${pid}`,
-      "    log  <cache>/_3000_bash.log",
-      "",
-      "  Your application (/bin/bash -l) is now available, tunneled through",
-      "  https://t.example/, at the following address:",
-      "",
-      "  https://t.example/  → /bin/bash -l",
-      "",
-      "",
-    ].join("\n"),
-  );
-  assert.doesNotMatch(up.stderr, /secret/, "the spec is never shown");
-
-  t.after(() => {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  });
-  process.kill(pid, 0);
-  assert.deepEqual(pids(cache), ["_3000_bash.pid"]);
-
-  const down = launch("-k");
-  assert.equal(down.status, 0, down.stderr);
-  assert.equal(down.stderr, `tunneld: stopped pid ${pid} (_3000_bash)\n`);
-  assert.equal(fs.readFileSync(marker, "utf8"), "torn down\n", "SIGINT, not a kill");
-  assert.deepEqual(pids(cache), []);
-});
-
-test("-d of a run already going hands that run back", posixOnly, (t) => {
-  const { launch } = pkg(t);
-  const up = launch("-d", ":3000", "bash");
-  assert.equal(up.status, 0, up.stderr);
-  const pid = Number(up.stderr.match(/^    pid  (\d+)$/m)[1]);
-  t.after(() => {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  });
-
-  const again = launch("-d", ":3000", "bash");
-  assert.equal(again.status, 0, again.stderr);
-  assert.equal(again.stdout, "https://t.example/\n", "the address, the way the binary prints it");
-  assert.match(again.stderr, /\ntunneld: already running as pid \d+\n\n🍕 tunneld is already running in the background\n/);
-  assert.match(again.stderr, new RegExp(`^    pid  ${pid}$`, "m"));
-  assert.match(again.stderr, /^    log  .*\/_3000_bash\.log$/m, "the log the status names");
-  assert.match(again.stderr, /\n  https:\/\/t\.example\/  → \/bin\/bash -l\n/);
-  assert.doesNotMatch(again.stderr, /-k ends it/);
-
-  const fg = launch(":3000", "bash");
-  assert.equal(fg.status, 75, "the foreground still refuses");
-  assert.match(fg.stderr, /npx tunneld -k ends it\n/);
-  assert.equal(launch("-k").status, 0);
-});
-
-test("-d names every origin's address, and says less with no cached settings", posixOnly, (t) => {
-  const { launch, env } = pkg(t);
-  env.ORIGINS = "http://localhost:3000,exec:///usr/bin/claude?arg=--resume";
-  const up = launch("-d", ":3000", "claude");
-  assert.equal(up.status, 0, up.stderr);
-  assert.match(
-    up.stderr,
-    /\n  Your applications \(http:\/\/localhost:3000, \/usr\/bin\/claude --resume\) are now\n  available, tunneled through https:\/\/t\.example\/, at the following addresses:\n\n  https:\/\/t\.example\/    → multiview\n  https:\/\/t\.example\/\?0  → http:\/\/localhost:3000\n  https:\/\/t\.example\/\?1  → \/usr\/bin\/claude --resume\n/,
-  );
-  assert.equal(launch("-k").status, 0);
-
-  // --no-cache: no .env, so no hostname or directory to name — the pid and
-  // log still.
-  const bare = launch("-d", "--no-cache", ":3000");
-  assert.equal(bare.status, 0, bare.stderr);
-  assert.doesNotMatch(bare.stderr, /t\.example\/\?|cwd/);
-  assert.match(bare.stderr, /Your application is now available at the address above\./);
-  assert.match(bare.stderr, /running in the background\n\n    pid  \d+\n    log  .*__no_cache__3000\.log\n\n  Your application is now available at the address above\.\n\n$/);
-  assert.equal(launch("-k").status, 0);
 });
 
 test("-k ends a run in the foreground too", posixOnly, async (t) => {
@@ -403,30 +277,6 @@ test("-kd and -dk are not the launcher's: they reach the binary and end nothing"
   assert.equal(launch("-k").status, 0);
 });
 
-test("-d relays a run that ends before its addresses", posixOnly, (t) => {
-  const { launch } = pkg(t);
-  const got = launch("-d", "fail", "3");
-  assert.equal(got.status, 3);
-  assert.equal(got.stdout, "");
-  assert.match(got.stderr, /no origin\n/);
-});
-
-test("Ctrl-C while -d waits ends the run", posixOnly, async (t) => {
-  const { bin, start, marker, events } = pkg(t);
-  // A run that never says it is up.
-  fs.writeFileSync(bin, STAND_IN.replace('kill -USR2 "$PPID"', ":"), { mode: 0o755 });
-  const child = start("-d", ":3000");
-  let stderr = "";
-  child.stderr.on("data", (d) => (stderr += d));
-  // Once it is up, the trap is set and the launcher is waiting.
-  await until(() => stderr.includes("  -> :3000"));
-  child.kill("SIGINT");
-  const status = await new Promise((r) => child.on("exit", (code) => r(code)));
-  assert.equal(status, 130, stderr);
-  assert.equal(fs.readFileSync(marker, "utf8"), "torn down\n");
-  assert.equal(events().at(-1).split(" ")[0], "down");
-});
-
 test("-k signals only a process holding its file", posixOnly, (t) => {
   const { launch, cache } = pkg(t);
   fs.mkdirSync(cache, { recursive: true });
@@ -440,17 +290,18 @@ test("-k signals only a process holding its file", posixOnly, (t) => {
   process.kill(process.pid, 0);
 });
 
-test("-k signals the run, not a child of it holding its file", posixOnly, (t) => {
-  const { bin, launch, root } = pkg(t);
+test("-k signals the run, not a child of it holding its file", posixOnly, async (t) => {
+  const { bin, launch, start, cache, root } = pkg(t);
   // A child forked with the file still open: what a run's child is between
   // fork and exec, held open here so the case does not depend on timing.
   const child = path.join(root, "child");
   fs.writeFileSync(bin, STAND_IN.replace("while :;", `sleep 30 & echo $! > "${child}"; while :;`), { mode: 0o755 });
-  const up = launch("-d", ":3000");
-  assert.equal(up.status, 0, up.stderr);
-  const pid = Number(up.stderr.match(/^    pid  (\d+)$/m)[1]);
+  const run = start(":3000");
+  await until(() => pids(cache).length === 1 && fs.existsSync(child));
+  const pid = Number(fs.readFileSync(path.join(cache, "_3000.pid"), "utf8"));
   const kid = Number(fs.readFileSync(child, "utf8"));
   t.after(() => {
+    run.kill("SIGKILL");
     for (const p of [pid, kid]) {
       try {
         process.kill(p, "SIGKILL");
@@ -505,39 +356,7 @@ test("-k<pid> ends that run and no other", posixOnly, async (t) => {
   assert.equal(launch("-k").status, 0);
 });
 
-test("-l lists every run, one line each", posixOnly, async (t) => {
-  const { launch, start, cache, env } = pkg(t);
-  assert.equal(launch("-l").stderr, "tunneld: no runs\n");
-
-  const up = launch("-d", ":3000", "bash");
-  assert.equal(up.status, 0, up.stderr);
-  const pid = Number(up.stderr.match(/^    pid  (\d+)$/m)[1]);
-  const bare = start("--no-cache", ":4000");
-  t.after(() => {
-    bare.kill("SIGKILL");
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  });
-  await until(() => pids(cache).length === 2);
-  const other = Number(fs.readFileSync(path.join(cache, "__no_cache__4000.pid"), "utf8"));
-
-  const got = launch("-l");
-  assert.equal(got.status, 0, got.stderr);
-  const width = Math.max(String(pid).length, String(other).length);
-  assert.equal(
-    got.stdout,
-    [
-      `${String(pid).padEnd(width)}  https://t.example/  ~/project  /bin/bash -l`,
-      `${String(other).padEnd(width)}  __no_cache__4000`,
-      "",
-    ].join("\n"),
-  );
-  assert.equal(launch("-l", ":3000").stderr, "tunneld: -l takes no arguments: it lists every run\n");
-  assert.equal(launch("-k").status, 0);
-});
-
-test("-l and -k find runs in $TUNNELD_CACHE_DIR", posixOnly, async (t) => {
+test("-k finds runs in $TUNNELD_CACHE_DIR", posixOnly, async (t) => {
   const { launch, start, env, root } = pkg(t);
   const moved = path.join(root, "volume");
   env.TUNNELD_CACHE_DIR = moved;
@@ -546,8 +365,9 @@ test("-l and -k find runs in $TUNNELD_CACHE_DIR", posixOnly, async (t) => {
   t.after(() => run.kill("SIGKILL"));
   await until(() => pids(moved).length === 1);
 
-  assert.match(launch("-l").stdout, /^\d+  https:\/\/t\.example\/  /m);
-  assert.equal(launch("-k").status, 0);
+  const down = launch("-k");
+  assert.equal(down.status, 0, down.stderr);
+  assert.match(down.stderr, /^tunneld: stopped pid \d+ \(_3000\)\n$/);
   await until(() => pids(moved).length === 0);
 });
 
@@ -558,8 +378,8 @@ test("-k takes no arguments", posixOnly, (t) => {
   assert.equal(got.stderr, "tunneld: -k takes no arguments: it ends every run, or the one -k<pid> names\n");
 });
 
-test("-d, -k and -l are refused on Windows", { skip: !win && "Windows only" }, () => {
-  for (const flag of ["-d", "-k", "-l"]) {
+test("-k is refused on Windows", { skip: !win && "Windows only" }, () => {
+  for (const flag of ["-k"]) {
     const got = spawnSync(process.execPath, [path.join(__dirname, "v1.cjs"), flag], { encoding: "utf8" });
     assert.equal(got.status, 1);
     assert.match(got.stderr, new RegExp(`${flag} is not supported on Windows`));

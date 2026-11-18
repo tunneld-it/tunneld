@@ -221,6 +221,8 @@ flag has a `TUNNELD_*` environment variable, and the flag wins.
 | `--identity-providers=` | `TUNNELD_IDENTITY_PROVIDERS` | Mint anonymously. |
 | `--qr` | `TUNNELD_QR` | Print your address as a QR code too, and open no tab. Scan it with your phone. |
 | `-s` | `TUNNELD_SILENT` | Print only your address, once the tunnel is up, for a script: `read -r url < <(tunneld -s :3000)`. |
+| `-d` | `TUNNELD_DETACH` | Run in the background and give the prompt back once the address is out. See [In the background](#in-the-background). |
+| `-l` | `TUNNELD_LIST` | List every run on this machine. |
 | `--log-level debug` | `TUNNELD_LOG` | Log to stderr. Silent by default. |
 | `--provider <host>` | `TUNNELD_PROVIDER` | Mint against another provider. Default `tunnel.pizza`. |
 | *(the arguments)* | `TUNNELD_ORIGINS` | Origins, comma-separated. |
@@ -234,16 +236,18 @@ Every flag and variable in full: [docs/reference.md](./docs/reference.md#flags).
 
 ### In the background
 
-Under `npx`, `-d` as the first word detaches: the addresses print, the prompt
-comes back, and the tunnel stays up; run again, it hands back the run
-already going. `npx tunneld -k` ends every tunneld run on the machine,
-detached or not, the way Ctrl+C would, and `-k<pid>` ends just that one.
-`npx tunneld -l` lists them. All three belong to the npm launcher, not to
-tunneld, and aren't available on Windows yet.
+`-d` (or `TUNNELD_DETACH=1`) detaches: the addresses print, the prompt comes
+back with a summary, and the tunnel stays up; run again, it hands back the
+run already going. `-l` lists every run on the machine. With `-s`, `-d`
+prints only the address and `-l` only each run's pid and address. Under
+`npx`, `npx tunneld -k` ends every tunneld run on the machine, detached or
+not, the way Ctrl+C would, and `-k<pid>` ends just that one; `-k` belongs to
+the npm launcher. None of them is available on Windows yet.
 
 ```sh
-npx tunneld -d :3000 claude
-npx tunneld -l
+tunneld -d :3000 claude
+addr=$(tunneld -d -s :3000)
+tunneld -l
 npx tunneld -k73146    # end the run with pid 73146
 npx tunneld -k         # end every run
 ```
