@@ -171,6 +171,9 @@ const RunningCode = 75
 type ExitError struct {
 	Code int
 	Err  error
+	// Quiet is whether the process exits without saying why, because what
+	// it would say has been said elsewhere.
+	Quiet bool
 }
 
 func (e ExitError) Error() string {
@@ -269,6 +272,17 @@ const (
 	// would print there goes to stderr.
 	MCPEnv = "TUNNELD_MCP"
 
+	// DetachEnv names whether a run is left running in the background, the
+	// console handed back once its addresses are out — the mirror of -d and
+	// --detach, which beat it. Any value strconv.ParseBool accepts works. Not
+	// on Windows.
+	DetachEnv = "TUNNELD_DETACH"
+
+	// ListEnv names whether to list the runs registered on this machine and
+	// exit — the mirror of -l and --list, which beat it. Any value
+	// strconv.ParseBool accepts works.
+	ListEnv = "TUNNELD_LIST"
+
 	// PreflightEnv names whether a run checks the network paths a tunnel
 	// depends on and exits, minting nothing — the mirror of --preflight,
 	// which beats it. Any value strconv.ParseBool accepts works.
@@ -279,16 +293,16 @@ const (
 	// --identity-providers, which beats it. Empty turns the lookup off.
 	IdentityProvidersEnv = "TUNNELD_IDENTITY_PROVIDERS"
 
-	// NotifyPidEnv is how the npm launcher asks a detached run to say when it
-	// is up. It carries the launcher's status, and a run whose parent has that
+	// NotifyPidEnv is how -d asks the run it started to say when it is up. It
+	// carries the starting process's pid, and a run whose parent has that
 	// pid sends it SIGUSR2 once its addresses are out, having first moved its
-	// stdout and stderr to a log beside its spec, so the launcher can exit and
-	// hand the console back. A value naming any other process is ignored:
-	// SIGUSR2 ends a process that has not asked for it, and whatever started a
-	// run is not always a launcher.
+	// stdout and stderr to a log beside its spec, so the starting process can
+	// exit and hand the console back. A value naming any other process is
+	// ignored: SIGUSR2 ends a process that has not asked for it, and whatever
+	// started a run is not always -d.
 	//
-	// Not a knob. Nothing mirrors it and nobody sets it by hand; it is the one
-	// line of protocol between the launcher and the binary it ships with.
+	// Not a knob. Nothing mirrors it and nobody sets it by hand; it is the
+	// protocol between -d and the run it starts.
 	NotifyPidEnv = "TUNNELD_NOTIFY_PID"
 
 	// StatusFdEnv names the descriptor, a pipe, a launcher that set

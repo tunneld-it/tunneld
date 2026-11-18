@@ -99,9 +99,9 @@ func VersionLine(origins Origins) string {
 	return line + ")"
 }
 
-// frameLine is the build line a terminal's frame shows along its bottom:
-// VersionLine with no run to name, since New builds it before a flag has been
-// parsed, and with tunneld's name marked as a hyperlink to tunnel.pizza.
+// banner is the build line a terminal's frame shows along its bottom:
+// VersionLine with no run to name, and with tunneld's name marked as a
+// hyperlink to the provider, --provider's or the default.
 //
 // Every shared terminal carries this line, and most of the people reading it
 // have never run tunneld, so the name is where they find out what it is. It
@@ -111,17 +111,17 @@ func VersionLine(origins Origins) string {
 // Not VersionLine itself, which `tunneld version` prints to stdout, where an
 // escape is noise in whatever reads it.
 //
-// The query says a frame sent the visit and which release drew it, so
-// tunnel.pizza can count them, and nothing about the run: not the origin, not
+// The query says a frame sent the visit and which release drew it, so the
+// provider can count them, and nothing about the run: not the origin, not
 // the machine, and above all not the tunnel's hostname, which is its only
 // credential. The page opens every link with no Referer for the same reason;
 // see attach/index.html.
-func frameLine() string {
-	home := url.URL{Scheme: "https", Host: "tunnel.pizza", Path: "/", RawQuery: url.Values{
+func (b *BuilderImpl) banner() string {
+	home := b.origin() + "/?" + url.Values{
 		"utm_source": {"tunneld"},
 		"utm_medium": {"frame"},
 		"utm_term":   {Version()},
-	}.Encode()}
+	}.Encode()
 	name, build, _ := strings.Cut(VersionLine(nil), " ")
-	return ansi.SetHyperlink(home.String()) + name + ansi.ResetHyperlink() + " " + build
+	return ansi.SetHyperlink(home) + name + ansi.ResetHyperlink() + " " + build
 }

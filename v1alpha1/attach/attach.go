@@ -277,7 +277,7 @@ type AttacherImpl struct {
 	// the dispatch, and because two providers claiming one scheme is a wiring
 	// mistake that should collapse rather than depend on order.
 	targets map[string]Targets
-	banner  string
+	banner  func() string
 	logs    logs.Log
 	motd    motd.Motd
 	sinks   []Sink
@@ -289,7 +289,7 @@ type AttacherImpl struct {
 // WithTargets sets some; an origin whose scheme none of them answers fails at
 // Attach rather than at construction.
 func New(opts ...Option) *AttacherImpl {
-	return v1.Apply(&AttacherImpl{}, opts...)
+	return v1.Apply(&AttacherImpl{banner: func() string { return "" }}, opts...)
 }
 
 // WithTargets sets what turns an origin's reference into something attach can
@@ -326,16 +326,20 @@ func WithMotd(motd motd.Motd) Option {
 // the bottom of its frame.
 //
 // Passed in rather than worked out here. It names the command, which an
-// embedding program renames, and the versions, which the root resolves from
-// build information — none of it knowable from a subpackage, and all of it
-// fixed for the life of the process, so it is configuration and not an
-// announcement.
+// embedding program renames, the versions, which the root resolves from
+// build information, and the provider it links to, which a flag settles —
+// none of it knowable from a subpackage. Read as each terminal is served, so
+// the flags have been read by then.
 //
 // It is drawn as styled text, so it can carry an OSC 8 hyperlink the way the
 // frame's own address does; the default marks tunneld's name in it as a link
-// to tunnel.pizza.
-func WithBanner(banner string) Option {
-	return func(b *AttacherImpl) { b.banner = banner }
+// to the provider.
+func WithBanner(banner func() string) Option {
+	return func(b *AttacherImpl) {
+		if banner != nil {
+			b.banner = banner
+		}
+	}
 }
 
 // WithSinks adds sinks told what every terminal this attacher serves says about
@@ -396,7 +400,7 @@ func (b *AttacherImpl) Attach(ctx context.Context, origins Servable, log *slog.L
 			_ = servers.Close()
 			return nil, err
 		}
-		server, err := serve(ctx, target, b.banner, b.logs, b.motd, b.sinks, asked, b.hold, log)
+		server, err := serve(ctx, target, b.banner(), b.logs, b.motd, b.sinks, asked, b.hold, log)
 		if err != nil {
 			_ = target.Close()
 			_ = servers.Close()
@@ -625,7 +629,7 @@ func (b *attached) Add(origin v1.Origin) (v1.Origin, error) {
 		return v1.Origin{}, err
 	}
 	a := b.attacher
-	server, err := serve(b.ctx, target, a.banner, a.logs, a.motd, a.sinks, b.asked, false, b.log)
+	server, err := serve(b.ctx, target, a.banner(), a.logs, a.motd, a.sinks, b.asked, false, b.log)
 	if err != nil {
 		_ = target.Close()
 		return v1.Origin{}, err

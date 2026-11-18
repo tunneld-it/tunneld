@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,11 +32,13 @@ import (
 	"github.com/tunnel-pizza/tunneld/v1alpha1/logs"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/mcp"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/origins"
+	"github.com/tunnel-pizza/tunneld/v1alpha1/pid"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/preflight"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/router"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/run"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/util/netutil"
 	"github.com/tunnel-pizza/tunneld/v1alpha1/util/stdioutil"
+	"golang.org/x/term"
 )
 
 // WithName sets the built command's name — the verb in usage strings and
@@ -109,6 +112,21 @@ func WithMultiview(multiview bool) Option {
 // both beat it. Unset, it prints none.
 func WithQR(show bool) Option {
 	return func(b *BuilderImpl) { b.qr = show }
+}
+
+// WithDetach seeds whether a run is left running in the background: this
+// process starts it again in a session of its own and returns once its
+// addresses are out, handing back the same run instead when it is already
+// going. -d, --detach and v1.DetachEnv all beat it. It needs WithPid, which
+// is how the run says it is up. Unset, a run stays in the foreground.
+func WithDetach(detach bool) Option {
+	return func(b *BuilderImpl) { b.detach = detach }
+}
+
+// WithList seeds whether the command lists the runs registered on this
+// machine and exits. -l, --list and v1.ListEnv all beat it. It needs WithPid.
+func WithList(list bool) Option {
+	return func(b *BuilderImpl) { b.list = list }
 }
 
 // WithSilent seeds whether a run prints only its address on stdout, once the
@@ -197,6 +215,8 @@ var flagEnv = map[string]string{
 	"mcp":       v1.MCPEnv,
 	"preflight": v1.PreflightEnv,
 	"silent":    v1.SilentEnv,
+	"detach":    v1.DetachEnv,
+	"list":      v1.ListEnv,
 }
 
 // Command assembles the configured command. It is the terminal step; the
@@ -352,6 +372,10 @@ to stderr. More: https://github.com/tunnel-pizza/tunneld#readme`
 			"check every network path a tunnel needs and exit, minting nothing [$"+v1.PreflightEnv+"]")
 		cmd.Flags().BoolVarP(&b.silent, "silent", "s", b.silent,
 			"print only the address on stdout, once the tunnel is up, and nothing else of tunneld's own [$"+v1.SilentEnv+"]")
+		cmd.Flags().BoolVarP(&b.detach, "detach", "d", b.detach,
+			"run in the background, handing the console back once the address is out [$"+v1.DetachEnv+"]")
+		cmd.Flags().BoolVarP(&b.list, "list", "l", b.list,
+			"list the runs registered on this machine and exit [$"+v1.ListEnv+"]")
 
 		// Docker's rule: options before the image. Flag parsing stops at the
 		// first origin, and every word after it is positional — so the words
@@ -436,6 +460,37 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		return nil
 	}
 
+	// -l needs no origins either: the runs are what the registry holds.
+	// Silent, they are one JSON array on stdout, [] for none.
+	if b.list {
+		if cmd.Flags().NArg() > 0 {
+			return errors.New("--list takes no origins: it lists every run")
+		}
+		if b.pid == nil {
+			return errors.New("--list: this program does not register its runs")
+		}
+		runs, err := b.pid.Runs()
+		if err != nil {
+			return fmt.Errorf("--list: %w", err)
+		}
+		if b.silent {
+			return pid.ListJSON(cmd.OutOrStdout(), runs)
+		}
+		if len(runs) == 0 {
+			fmt.Fprintln(stderr, cmd.Name()+": no runs")
+			return nil
+		}
+		pid.List(cmd.OutOrStdout(), runs)
+		return nil
+	}
+
+	// -d: the run is started again in a session of its own and this returns
+	// once it is up. That run is one a launcher waits on, so it never
+	// detaches again.
+	if b.detach && (b.pid == nil || !b.pid.Launched()) {
+		return b.background(cmd, stderr)
+	}
+
 	// An MCP run's stdin and stdout are its client's (mcp.WithStdio), locked
 	// before anything writes: the transport holds stdout alone, and what the
 	// run, a library or a child would print there goes to stderr.
@@ -494,6 +549,12 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 	// same run already going is refused here, before anything is minted.
 	if b.pid != nil {
 		release, err := b.pid.Register(origins, log)
+		// A silent run started by -d says nothing of its own: what it was
+		// refused for is handed back by the process that started it.
+		if exit := (v1.ExitError{}); errors.As(err, &exit) && b.silent && b.pid.Launched() {
+			exit.Quiet = true
+			return exit
+		}
 		if err != nil {
 			return err
 		}
@@ -657,7 +718,7 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		// issues may PATCH the password, from the provider's origin.
 		router.WithCache(spec),
 		router.WithAuth(b.auth),
-		router.WithAllowOrigin(router.ProviderOrigin(cmp.Or(b.provider, v1.DefaultProvider))),
+		router.WithOrigin(b.origin),
 		router.WithLog(log),
 		router.WithMcp(mcp.New(
 			mcp.WithContext(ctx),
@@ -1212,6 +1273,60 @@ func isAgent() bool {
 		}
 	}
 	return false
+}
+
+// background is how -d starts the run again; a test stands in for it.
+var background = pid.Background
+
+// background runs this executable again with its own arguments, left in the
+// background once it is up, and says so: the summary on stderr, or, silent,
+// nothing more than the address the run printed. The same run already going
+// is handed back instead, its addresses on stdout.
+func (b *BuilderImpl) background(cmd *cobra.Command, stderr io.Writer) error {
+	if b.pid == nil {
+		return errors.New("--detach: this program does not register its runs")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("--detach: %w", err)
+	}
+	status, err := background(exe, os.Args[1:], os.Environ())
+	already := errors.Is(err, v1.ErrRunning) && status.Pid > 0
+	switch {
+	case errors.Is(err, errors.ErrUnsupported):
+		return fmt.Errorf("--detach is not supported on %s yet", runtime.GOOS)
+	case err != nil && !already:
+		return err
+	}
+	run := pid.Run{Pid: status.Pid}
+	if runs, err := b.pid.Runs(); err == nil {
+		for _, r := range runs {
+			if r.Pid == status.Pid {
+				run = r
+			}
+		}
+	}
+	if already {
+		for _, address := range pid.Addresses(run) {
+			fmt.Fprintln(cmd.OutOrStdout(), address)
+		}
+	}
+	if !b.silent {
+		pid.Summary(stderr, run, already, style(stderr))
+	}
+	return nil
+}
+
+// style is how the summary is painted on stderr: in color where it is a
+// terminal that wants it, to its width.
+func style(stderr io.Writer) pid.Style {
+	s := pid.Style{Color: console.IsTerminal(stderr) && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"}
+	if f, ok := stderr.(*os.File); ok {
+		if w, _, err := term.GetSize(int(f.Fd())); err == nil {
+			s.Columns = w
+		}
+	}
+	return s
 }
 
 // isPod is whether this process runs in a Kubernetes pod's container, which

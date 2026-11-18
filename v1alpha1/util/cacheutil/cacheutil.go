@@ -12,10 +12,14 @@ import (
 // name is the directory under the user's cache directory.
 const name = "tunneld"
 
-// Dir is the directory a run's files go in: $TUNNELD_CACHE_DIR when set,
-// else tunneld under the user's cache directory, else "" when there is none.
+// Dir is the directory a run's files go in, absolute: $TUNNELD_CACHE_DIR
+// when set, resolved against the working directory, else tunneld under the
+// user's cache directory, else "" when there is none.
 func Dir() string {
 	if dir := os.Getenv(v1.CacheDirEnv); dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			return abs
+		}
 		return dir
 	}
 	if base, err := os.UserCacheDir(); err == nil {

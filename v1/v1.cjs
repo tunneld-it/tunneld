@@ -29,20 +29,16 @@
 //
 //   - It refuses a command line that could mean two things (misread, below),
 //     before the run starts, and names the quoting for each.
-//   - `-d`, as the first word, detaches: the run goes on in the background,
-//     and once it signals that its addresses are out the launcher hands the
-//     console back.
 //   - `-k`, as the only word, ends every run on the machine, detached or
 //     not, the way Ctrl-C would, so the teardown runs; `-k<pid>` ends the one
 //     run with that pid. The binary registers each run as a file it holds
 //     open beside its cached spec (v1alpha1/cache), and -k ends whatever
 //     holds one.
-//   - `-l`, as the only word, lists every run, a line each.
 //
-// One flag at most, read only as the first word and stripped before the
-// binary sees the line. Anything else, -kd included, is the binary's, and it
-// refuses them as unknown flags, so a brew user and an npx user never mean
-// different things by the same flag.
+// -d and -l are the binary's own flags, so they reach it as typed. -k is
+// read only as the only word; anything else, -kd included, is the binary's,
+// and it refuses them as unknown flags, so a brew user and an npx user never
+// mean different things by the same flag.
 
 const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
@@ -68,16 +64,11 @@ const PLATFORMS = [
 const STOP_MS = 30000;
 const POLL_MS = 50;
 
-// What the binary reads to know a launcher is waiting on it; see detach.
-const NOTIFY_ENV = "TUNNELD_NOTIFY_PID";
 
 // The status the binary exits with when another run holds this one's
 // lock. Keep in step with RunningCode in v1/v1.go.
 const RUNNING = 75;
 
-// Names fd 3, the pipe a detaching launcher reads a refused run's status
-// from: a line of JSON naming the run holding the lock, { pid, env, log }.
-const STATUS_ENV = "TUNNELD_STATUS_FD";
 
 function fail(message) {
   console.error(`${WRAPPER_NAME}: ${message}`);
@@ -338,97 +329,37 @@ function signum(signal) {
   return 128 + (constants.signals[signal] ?? 0);
 }
 
-// start runs the binary on this process's own streams, in the foreground or,
-// detaching, in a session of its own.
-//
-// In the foreground this process waits for it and passes on its exit status.
-// Listening keeps this process alive until the child is done. On POSIX a
-// signal is also forwarded, for the case where only this pid was targeted. On
-// Windows the console has already delivered Ctrl-C to the child, and
-// child.kill() there is TerminateProcess, which would cut teardown short, so
-// it only waits.
-//
-// Detaching, it waits instead to be told the run is up. stdin is /dev/null —
-// a background run has nothing to read, and must not hold the terminal's. The
-// banner, the addresses and the origin each reaches go straight to the
-// caller, the same two streams a foreground run uses. The telling is a
-// signal: the binary is given this process's pid in NOTIFY_ENV, and once its
-// addresses are out it points its stdout and stderr at its log, <key>.log
-// beside its spec, and sends SIGUSR2 to its parent when that is the pid it was
-// given — and to nobody otherwise, since SIGUSR2 ends a process that has not
-// asked for it. Moving the streams first is what lets the caller go: once this
-// exits, nothing holds them, so `$(npx tunneld -d …)` returns, and nothing
-// lands on a prompt later. SIGUSR2 rather than SIGUSR1, which Node keeps for
-// its debugger.
-//
-// A detached run that ends first — a bad origin, --help, a mint that fails —
-// has already said so on the caller's streams, and its exit status is passed
-// on, so it fails like a foreground one. One refused because the same run is
-// already going names that run on the status pipe, fd 3, and that run
-// is handed back instead, the way this one would have been: its addresses on
-// stdout, the summary on stderr, status 0. Ctrl-C while waiting ends the run: it
-// is in a session of its own, where the terminal's Ctrl-C does not reach, and
-// nothing has been handed back yet.
-function start(bin, args, detaching) {
+// start runs the binary on this process's own streams and waits for it,
+// passing on its exit status. Listening keeps this process alive until the
+// child is done. On POSIX a signal is also forwarded, for the case where only
+// this pid was targeted. On Windows the console has already delivered Ctrl-C
+// to the child, and child.kill() there is TerminateProcess, which would cut
+// teardown short, so it only waits. -d is the binary's: it starts the run
+// again in the background itself and exits once it is up, so this does too.
+function start(bin, args) {
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
-  let interrupted = null;
   let child = null;
 
   // Leaves by letting the event loop run dry rather than process.exit, which
   // can cut short a write to a pipe that is still draining.
   const finish = (status) => {
-    for (const signal of [...signals, "SIGUSR2"]) {
+    for (const signal of signals) {
       process.removeAllListeners(signal);
     }
     process.exitCode = status;
   };
 
-  if (detaching) {
-    // Listening before the spawn: unheard, SIGUSR2 would end this process.
-    process.on("SIGUSR2", () => {
-      child.removeAllListeners("close");
-      child.stdio[3].destroy();
-      child.unref();
-      finish(0);
-      process.stderr.write(summary(located(child.pid)));
-    });
-  }
   for (const signal of signals) {
     process.on(signal, () => {
-      if (detaching) {
-        interrupted = signal;
-        child.kill("SIGINT");
-      } else if (process.platform !== "win32") {
+      if (process.platform !== "win32") {
         child.kill(signal);
       }
     });
   }
 
-  child = spawn(
-    bin,
-    args,
-    detaching
-      ? {
-          detached: true,
-          stdio: ["ignore", "inherit", "inherit", "pipe"],
-          env: { ...process.env, [NOTIFY_ENV]: String(process.pid), [STATUS_ENV]: "3" },
-        }
-      : { stdio: "inherit" },
-  );
+  child = spawn(bin, args, { stdio: "inherit" });
   child.on("error", (err) => fail(`cannot run ${bin}: ${err.message}`));
-  let status = "";
-  if (detaching) {
-    child.stdio[3].setEncoding("utf8").on("data", (chunk) => (status += chunk));
-  }
-  // close rather than exit: it waits for the status pipe to be read.
   child.on("close", (code, signal) => {
-    const running = code === RUNNING && parse(status);
-    if (running?.pid > 0) {
-      finish(0);
-      process.stdout.write(addresses(running));
-      process.stderr.write(summary(running, true));
-      return;
-    }
     if (code === RUNNING) {
       console.error(
         `${WRAPPER_NAME}: it is running in the background or another terminal: npx ${WRAPPER_NAME} -k ends it`,
@@ -436,195 +367,13 @@ function start(bin, args, detaching) {
     }
     // Node ignores some signals itself (SIGPIPE), so re-raising is
     // unreliable; report a signal death the way a shell does, 128+signum.
-    finish(interrupted ? signum(interrupted) : signal ? signum(signal) : (code ?? 1));
+    finish(signal ? signum(signal) : (code ?? 1));
   });
-}
-
-// parse is the status a refused run wrote, a line of JSON, or null.
-function parse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 // paint wraps text in an ANSI style when stderr is a terminal that wants
 // one: not when it is a file or a pipe, not under NO_COLOR, not on a dumb
 // terminal.
-const COLOR = process.stderr.isTTY && !("NO_COLOR" in process.env) && process.env.TERM !== "dumb";
-const paint = (code) => (text) => (COLOR ? `\x1b[${code}m${text}\x1b[0m` : text);
-const bold = paint("1");
-const dim = paint("2");
-const cyan = paint("36");
-
-// home spells a path under $HOME the short way.
-function home(p) {
-  const h = process.env.HOME;
-  return h && p.startsWith(h + path.sep) ? "~" + p.slice(h.length) : p;
-}
-
-// envFile reads the NAME='value' lines the binary caches a run's spec and
-// settings in. The spec line is among them and is never shown.
-function envFile(text) {
-  const out = {};
-  for (const line of text.split("\n")) {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)='(.*)'$/);
-    if (m) {
-      out[m[1]] = m[2];
-    }
-  }
-  return out;
-}
-
-// label is an origin as a person reads it: a program as its path and
-// arguments rather than the exec:// URL carrying them.
-function label(origin) {
-  try {
-    const u = new URL(origin);
-    if (u.protocol === "exec:") {
-      return [decodeURIComponent(u.pathname), ...u.searchParams.getAll("arg")].map(quote).join(" ");
-    }
-  } catch {
-    // Not a URL this can read; shown as it is.
-  }
-  return origin;
-}
-
-// wrap breaks prose into lines of at most width visible columns, indented,
-// never inside a word, so a URL stays whole to be clicked. Styling is applied
-// by the caller's style function to each word, after measuring.
-function wrap(words, width, indent) {
-  const lines = [];
-  let line = [];
-  let used = 0;
-  for (const [text, style] of words) {
-    if (line.length > 0 && used + 1 + text.length > width) {
-      lines.push(indent + line.join(" "));
-      line = [];
-      used = 0;
-    }
-    used += (line.length > 0 ? 1 : 0) + text.length;
-    line.push(style(text));
-  }
-  if (line.length > 0) {
-    lines.push(indent + line.join(" "));
-  }
-  return lines;
-}
-
-// prose is what the run shares, said as a sentence: the origins, the address
-// they are tunneled through, and that the list below is where each one
-// answers. In lines of at most columns, indent included.
-function prose(host, origins, columns) {
-  const plain = (s) => s.split(" ").map((w) => [w, (x) => x]);
-  const one = origins.length === 1;
-  const names = `(${origins.map(label).join(", ")})`;
-  const base = `https://${host}/`;
-  const words = [
-    ...plain(one ? "Your application" : "Your applications"),
-    ...plain(names),
-    ...plain(one ? "is now available, tunneled through" : "are now available, tunneled through"),
-    [base + ",", () => cyan(base) + ","],
-    ...plain(one ? "at the following address:" : "at the following addresses:"),
-  ];
-  return wrap(words, Math.max(columns, 24) - 2, "  ");
-}
-
-// located is the run pid is, the way a refused run's status names one: its
-// pid, and the paths of its <key>.env and <key>.log, those that exist. The key
-// is found by the <key>.pid naming the pid.
-function located(pid) {
-  const dir = cacheDir();
-  const run = { pid };
-  try {
-    const key = fs
-      .readdirSync(dir)
-      .filter((n) => n.endsWith(".pid"))
-      .map((n) => path.basename(n, ".pid"))
-      .find((k) => read(path.join(dir, `${k}.pid`)).trim() === String(pid));
-    for (const ext of key ? ["env", "log"] : []) {
-      const file = path.join(dir, `${key}.${ext}`);
-      if (fs.existsSync(file)) {
-        run[ext] = file;
-      }
-    }
-  } catch {
-    // No cache directory: nothing more to say than the pid.
-  }
-  return run;
-}
-
-// cached is the settings the run <key> cached in <key>.env: empty when there
-// are none.
-function cached(key) {
-  return envFile(read(path.join(cacheDir(), `${key}.env`)));
-}
-
-// addresses is what run is printed on stdout, one per line, the way the
-// binary prints them: the panel's address alone when there is a panel,
-// otherwise one per origin, routed by ?n when there is more than one. Empty
-// with no cached settings.
-function addresses(run) {
-  const env = run.env ? envFile(read(run.env)) : {};
-  const host = env.LIBTUNNEL_HOSTNAME;
-  if (!host) {
-    return "";
-  }
-  const base = `https://${host}/`;
-  const origins = (env.TUNNELD_ORIGINS || "").split(",").filter(Boolean);
-  if (origins.length <= 1 || env.TUNNELD_MULTIVIEW === "true") {
-    return `${base}\n`;
-  }
-  return origins.map((_, i) => `${base}?${i}\n`).join("");
-}
-
-// summary is what a detached run is handed back with: the directory it runs
-// in, its pid and its log, then what it shares and the address each origin
-// answers on. run is { pid, env, log }, as located finds it or a refused
-// run's status names it.
-//
-// Read from <key>.env, the settings the run settled on and the hostname it
-// got, which it writes before signalling. A run under --no-cache writes no
-// .env, and gets what its pid and log alone can say; its addresses are on
-// stdout above either way.
-function summary(run, already = false) {
-  const env = run.env ? envFile(read(run.env)) : {};
-
-  const lines = ["", `${bold(`🍕 tunneld is ${already ? "already" : "now"} running in the background`)}`, ""];
-  const row = (name, value) => lines.push(`    ${dim(name)}  ${value}`);
-  if (env.PWD) {
-    row("cwd", home(env.PWD));
-  }
-  row("pid", String(run.pid));
-  if (run.log) {
-    row("log", home(run.log));
-  }
-  lines.push("");
-
-  const host = env.LIBTUNNEL_HOSTNAME;
-  if (!host) {
-    lines.push("  Your application is now available at the address above.", "");
-  } else {
-    const base = `https://${host}/`;
-    const origins = (env.TUNNELD_ORIGINS || "").split(",").filter(Boolean);
-    // The terminal's width where there is one, so a narrow window does not
-    // wrap every line a second time; 78 at most, and 78 into a file.
-    const columns = Math.min(process.stderr.columns || 78, 78);
-    lines.push(...prose(host, origins, columns), "");
-    if (origins.length <= 1) {
-      lines.push(`  ${cyan(base)}  ${dim("→")} ${label(origins[0] || "")}`);
-    } else {
-      const width = `${base}?${origins.length - 1}`.length;
-      if (env.TUNNELD_MULTIVIEW === "true") {
-        lines.push(`  ${cyan(base.padEnd(width))}  ${dim("→")} multiview`);
-      }
-      origins.forEach((o, i) => lines.push(`  ${cyan(`${base}?${i}`.padEnd(width))}  ${dim("→")} ${label(o)}`));
-    }
-    lines.push("");
-  }
-  return lines.join("\n") + "\n";
-}
 
 // holders is every run holding file open. A run keeps its <key>.pid open
 // for as long as it runs, and the kernel closes it however the process ends,
@@ -726,29 +475,6 @@ function runs() {
   return found;
 }
 
-// list prints every run on stdout, a line each: its pid, then its address,
-// directory and origins from its cached settings, or its key when there are
-// none.
-function list() {
-  const found = runs();
-  if (found.length === 0) {
-    console.error(`${WRAPPER_NAME}: no runs`);
-    return;
-  }
-  const width = Math.max(...found.map((r) => String(r.pid).length));
-  for (const { pid, key } of found) {
-    const env = cached(key);
-    const fields = env.LIBTUNNEL_HOSTNAME
-      ? [
-          `https://${env.LIBTUNNEL_HOSTNAME}/`,
-          env.PWD && home(env.PWD),
-          (env.TUNNELD_ORIGINS || "").split(",").filter(Boolean).map(label).join(", "),
-        ]
-      : [key];
-    console.log([String(pid).padEnd(width), ...fields.filter(Boolean)].join("  "));
-  }
-}
-
 // kill ends every run, or only the one whose pid is only, with SIGINT, which
 // is what Ctrl-C sends a foreground run, so each one tears down the way it
 // would there: the programs its origins started, the attach servers, the
@@ -804,44 +530,32 @@ function kill(only) {
   }, POLL_MS);
 }
 
-// FLAG is the launcher's own first word, one at most: -d, -l, -k, or -k with
-// a pid and no space between.
-const FLAG = /^-(?:d|l|k([1-9]\d*)?)$/;
+// FLAG is the launcher's own first word: -k, or -k with a pid and no space
+// between.
+const FLAG = /^-k([1-9]\d*)?$/;
 
 function main() {
   const argv = process.argv.slice(2);
   const match = FLAG.exec(argv[0] ?? "");
-  const flag = match ? argv[0].slice(0, 2) : null;
-  const args = match ? argv.slice(1) : argv;
-  if (flag) {
-    refuseOnWindows(flag);
-  }
-
-  if (flag === "-k") {
-    if (args.length > 0) {
+  if (match) {
+    refuseOnWindows("-k");
+    if (argv.length > 1) {
       fail("-k takes no arguments: it ends every run, or the one -k<pid> names");
     }
     kill(match[1] && Number(match[1]));
     return;
   }
-  if (flag === "-l") {
-    if (args.length > 0) {
-      fail("-l takes no arguments: it lists every run");
-    }
-    list();
-    return;
-  }
 
-  const reading = misread(args);
+  const reading = misread(argv);
   if (reading) {
-    fail(ambiguous(reading, flag ? `npx ${WRAPPER_NAME} ${flag}` : `npx ${WRAPPER_NAME}`));
+    fail(ambiguous(reading, `npx ${WRAPPER_NAME}`));
   }
 
-  start(binaryPath(), args, flag === "-d");
+  start(binaryPath(), argv);
 }
 
 if (require.main === module) {
   main();
 }
 
-module.exports = { ambiguous, isOrigin, misread, onPath, prose, quote };
+module.exports = { ambiguous, isOrigin, misread, onPath, quote };

@@ -32,10 +32,13 @@ var errLocked = errors.New("locked by another process")
 // is already going. Detach, once the addresses are out, hands the run
 // back from a launcher waiting on it — pointing its stdout and stderr at out,
 // or nowhere when out is nil, and telling the launcher — and reports whether
-// one was waiting.
+// one was waiting. Launched is whether one is waiting, before Detach. Runs
+// is every run registered, for -l and for handing a run back.
 type Pid interface {
 	Register(origins v1.Origins, log v1.Logger) (release func(), err error)
 	Detach(out *os.File, log v1.Logger) bool
+	Launched() bool
+	Runs() ([]Run, error)
 }
 
 // Option configures a PidImpl at construction.
@@ -222,9 +225,12 @@ func (p *PidImpl) Register(origins v1.Origins, log v1.Logger) (release func(), e
 	return release, nil
 }
 
-// status is what a refused run tells the launcher: the pid of the run holding
+// Launched implements Pid.
+func (p *PidImpl) Launched() bool { return p.parent != 0 }
+
+// Status is what a refused run tells the launcher: the pid of the run holding
 // the lock, and the paths of that run's settings and log, those that exist.
-type status struct {
+type Status struct {
 	Pid int    `json:"pid"`
 	Env string `json:"env,omitempty"`
 	Log string `json:"log,omitempty"`
@@ -233,7 +239,7 @@ type status struct {
 // refused writes the status of a run refused for pid to the status pipe, as a
 // line of JSON.
 func (p *PidImpl) refused(origins v1.Origins, pid int) {
-	s := status{Pid: pid}
+	s := Status{Pid: pid}
 	if path := p.file(origins, ".env"); exists(path) {
 		s.Env = path
 	}
@@ -272,8 +278,8 @@ func same(f *os.File, path string) bool {
 // to out — the run's log file, which is not this package's to open or close —
 // or nowhere when out is nil. They are moved and then the launcher is
 // signalled, in that order, so that once it exits nothing here holds a stream
-// of the caller's: `$(npx tunneld -d …)` returns, and nothing lands on a
-// prompt later.
+// of the caller's: `$(tunneld -d …)` returns, and nothing lands on a prompt
+// later.
 //
 // A run that cannot move its streams still signals: the launcher exits either
 // way, and the caller's streams stay held until the run ends, which is logged.

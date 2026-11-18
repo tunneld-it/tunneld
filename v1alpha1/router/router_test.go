@@ -1120,6 +1120,30 @@ func TestRouteVerifiesARemoteCertificate(t *testing.T) {
 	}
 }
 
+// TestUnreachableCreditsTheProvider pins the "nothing is listening" page's
+// credit: a link to the provider the router was told of, not a fixed one.
+func TestUnreachableCreditsTheProvider(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead, _ := url.Parse("http://" + l.Addr().String())
+	l.Close()
+	r := New()
+	u, err := r.Route(t.Context(), WithOrigins(origins.New(origins.WithOrigins(origins.NewOrigin(dead)))), WithOrigin(func() string { return "https://tunneld.it" }), WithLog(discard))
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	t.Cleanup(r.Cancel)
+	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	_, body := get(t, http.DefaultClient, req)
+	if !strings.Contains(body, `<a href="https://tunneld.it/?utm_source=tunneld&amp;utm_medium=unreachable"`) || strings.Contains(body, "tunnel.pizza") {
+		t.Errorf("page credits:\n%s\nwant https://tunneld.it/ and no other provider", body)
+	}
+}
+
 // TestRouteDialsHTTPSUnverified pins that an https origin is reached however
 // its certificate reads: an origin on this machine presents whatever its dev
 // server made up.
@@ -1794,7 +1818,7 @@ func TestAuthenticateHeader(t *testing.T) {
 func TestAuth(t *testing.T) {
 	secret := []byte("s3cr3t")
 	r := New(WithCache(cacheOf{"LIBTUNNEL_SPEC='x'\n", secret, runKey}))
-	env := controlOf(t, r, ".env", WithAuth(authOf{}), WithAllowOrigin("https://tunnel.pizza"))
+	env := controlOf(t, r, ".env", WithAuth(authOf{}), WithOrigin(func() string { return "https://tunnel.pizza" }))
 	base := strings.TrimSuffix(env, "/_tunneld/.env")
 
 	if resp, _ := ask(t, "GET", base+"/app", ""); resp.StatusCode != 401 {
@@ -1885,8 +1909,11 @@ func TestAuth(t *testing.T) {
 	}
 }
 
+// TestProviderOrigin pins a provider as a browser origin: https:// and the
+// host, the scheme and host of one that names a scheme, the default for none.
 func TestProviderOrigin(t *testing.T) {
 	for in, want := range map[string]string{
+		"":                                    "https://" + v1.DefaultProvider,
 		"tunnel.pizza":                        "https://tunnel.pizza",
 		"localhost:3000":                      "https://localhost:3000",
 		"http://localhost:3000/tunnel":        "http://localhost:3000",
@@ -2038,8 +2065,8 @@ func TestProxyHoldsTheScope(t *testing.T) {
 	listed.Serve(1, term)
 	lone := origins.New(origins.WithOrigins(execAt(0)))
 	lone.Serve(0, term)
-	both := proxy(listed, http.NotFoundHandler(), slog.New(slog.DiscardHandler))
-	alone := proxy(lone, http.NotFoundHandler(), slog.New(slog.DiscardHandler))
+	both := New(WithOrigins(listed), WithLog(discard)).proxy(http.NotFoundHandler())
+	alone := New(WithOrigins(lone), WithLog(discard)).proxy(http.NotFoundHandler())
 	for _, tc := range []struct {
 		h       http.Handler
 		target  string
