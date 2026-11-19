@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -36,13 +37,15 @@ type writerFunc func([]byte) (int, error)
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 // waiting is a terminal that answers Wait with got, matched, err, keeping
-// what it was asked.
+// what it was asked; program, when set, is the program it runs, and a wait
+// that blocks ends once that has exited.
 type waiting struct {
 	attach.Terminal // the rest, which Reply never asks of it
 	got             attach.Output
 	matched         bool
 	err             error
 	block           bool
+	program         *attach.Program
 	asked           struct {
 		reader, cursor, until string
 		idle                  time.Duration
@@ -52,6 +55,24 @@ type waiting struct {
 
 // Command knows no command.
 func (w *waiting) Command(string) (attach.Command, bool) { return attach.Command{}, false }
+
+// Program is program, a container's terminal without one.
+func (w *waiting) Program() (attach.Program, bool) {
+	if w.program == nil {
+		return attach.Program{}, false
+	}
+	return *w.program, true
+}
+
+// Exited is closed for a program that has exited, and nil otherwise.
+func (w *waiting) Exited() <-chan struct{} {
+	if w.program == nil || !w.program.Exited {
+		return nil
+	}
+	done := make(chan struct{})
+	close(done)
+	return done
+}
 
 func (w *waiting) Wait(ctx context.Context, reader, cursor string, until *regexp.Regexp, idle time.Duration) (attach.Output, bool, error) {
 	w.asked.reader, w.asked.cursor, w.asked.idle = reader, cursor, idle
@@ -69,9 +90,12 @@ func (w *waiting) Wait(ctx context.Context, reader, cursor string, until *regexp
 
 // TestWait pins how a terminal tool waits: the defaults and the cap on
 // what it is asked, the answer saying how the wait ended, its text capped,
-// and a cursor not the terminal's a tool error.
+// a cursor not the terminal's a tool error, and a program's exit ending the
+// wait, answered with how it exited.
 func TestWait(t *testing.T) {
 	ms := func(n int) *int { return &n }
+	three := 3
+	exited := &attach.Program{Exited: true, ExitCode: &three}
 	for name, tc := range map[string]struct {
 		w      For
 		term   *waiting
@@ -90,6 +114,7 @@ func TestWait(t *testing.T) {
 		"a stale cursor": {For{}, &waiting{err: attach.ErrStaleCursor}, 500 * time.Millisecond, 10 * time.Second, "", types.Reply{}, "not this terminal's"},
 		"a junk cursor":  {For{}, &waiting{err: attach.ErrBadCursor}, 500 * time.Millisecond, 10 * time.Second, "", types.Reply{}, "not a cursor"},
 		"too much text":  {For{}, &waiting{got: attach.Output{Text: strings.Repeat("x", tool.MaxText+1)}}, 500 * time.Millisecond, 10 * time.Second, "", types.Reply{}, ""},
+		"it exited":      {For{IdleMs: ms(0), TimeoutMs: 10_000}, &waiting{block: true, program: exited}, 0, 10 * time.Second, "", types.Reply{Program: exited}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, got := logged(t)
@@ -117,7 +142,7 @@ func TestWait(t *testing.T) {
 				}
 				return
 			}
-			if reply != tc.reply {
+			if !reflect.DeepEqual(reply, tc.reply) {
 				t.Errorf("reply = %+v, want %+v", reply, tc.reply)
 			}
 		})

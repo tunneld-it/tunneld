@@ -96,6 +96,9 @@ func run() tool.RunFunc[In, types.Reply] {
 			if state, ok := term.Command(typed); ok {
 				reply.Command = &state
 			}
+			if program, ok := term.Program(); ok {
+				reply.Program = &program
+			}
 			return nil, reply, nil
 		}
 		reply, err := output.Wait(c, ctx, "terminal_exec", term, reader, sent, typed, until, in.For, start)

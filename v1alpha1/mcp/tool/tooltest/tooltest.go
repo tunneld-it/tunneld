@@ -114,6 +114,8 @@ func (b Attached) Terminal(index int) (attach.Terminal, bool) {
 // an offset into Prints; "stale" is one from another log. Err, when set, is
 // what Send answers, having kept nothing. Busy, when set, is the command
 // Running answers; Commands is what Command and Ended know, by cursor.
+// Runs, when set, is the program Program answers, a container's terminal
+// when not; Exited is closed once it has exited.
 type Terminal struct {
 	Shows    attach.Screen
 	Prints   string
@@ -121,6 +123,7 @@ type Terminal struct {
 	Err      error
 	Busy     *attach.Command
 	Commands map[string]attach.Command
+	Runs     *attach.Program
 
 	mu     sync.Mutex
 	sent   []attach.Input
@@ -174,6 +177,24 @@ func (t *Terminal) Command(cursor string) (attach.Command, bool) {
 	defer t.mu.Unlock()
 	c, ok := t.Commands[cursor]
 	return c, ok
+}
+
+// Program is Runs.
+func (t *Terminal) Program() (attach.Program, bool) {
+	if t.Runs == nil {
+		return attach.Program{}, false
+	}
+	return *t.Runs, true
+}
+
+// Exited is closed when Runs has exited, and never otherwise.
+func (t *Terminal) Exited() <-chan struct{} {
+	if t.Runs == nil || !t.Runs.Exited {
+		return nil
+	}
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 // Ended is closed when Commands knows cursor as ended, and never otherwise.

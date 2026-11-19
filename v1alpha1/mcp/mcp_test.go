@@ -320,6 +320,50 @@ func TestAShellAddedOverMcp(t *testing.T) {
 	}
 }
 
+// TestAProgramSaysItExited pins a program's exit over MCP: a wait ends when
+// the program exits, rather than at its timeout, with what it printed and
+// program {exited, exit_code}; a read after says the same.
+func TestAProgramSaysItExited(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	list := origins.New(origins.WithOrigins(tooltest.Origins(t, "exec://"+sh+"?arg=-c&arg=sleep+1%3B+echo+bye%3B+exit+3").All()...))
+	attached, err := attach.New(attach.WithTargets(shell.New())).Attach(t.Context(), list, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer func() { _ = attached.Close() }()
+	cs := connect(t, New(WithOrigins(list), WithAttached(attached)))
+	call := func(tool string, args map[string]any) map[string]any {
+		t.Helper()
+		res, err := cs.CallTool(t.Context(), &sdk.CallToolParams{Name: tool, Arguments: args})
+		if err != nil || res.IsError {
+			t.Fatalf("%s = %+v, %v", tool, res, err)
+		}
+		raw, _ := json.Marshal(res.StructuredContent)
+		var out map[string]any
+		_ = json.Unmarshal(raw, &out)
+		return out
+	}
+	const url = "https://0tabc.tunneld.domain/"
+
+	start := time.Now()
+	waited := call("terminal_wait", map[string]any{"url": url, "until": "never printed", "timeout_ms": 10000})
+	if took := time.Since(start); took > 8*time.Second || waited["timed_out"] != false || !strings.Contains(fmt.Sprint(waited["text"]), "bye") {
+		t.Fatalf("terminal_wait on a program that exits = %v after %s, want it ended by the exit, with bye", waited, took)
+	}
+	if p, _ := waited["program"].(map[string]any); p["exited"] != true || p["exit_code"] != float64(3) {
+		t.Errorf("terminal_wait's program = %v, want exited 3", waited["program"])
+	}
+	if p, _ := call("terminal_read", map[string]any{"url": url})["program"].(map[string]any); p["exited"] != true || p["exit_code"] != float64(3) {
+		t.Errorf("terminal_read's program = %v, want exited 3", p)
+	}
+}
+
 // TestShellsMarkTheirCommands drives each shell on this machine through the
 // tools, as an agent does: a command line answers how it exited; one still
 // running answers running and its cursor, a second line is refused while it
