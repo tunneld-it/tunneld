@@ -43,7 +43,7 @@ func run() tool.RunFunc[In, types.Reply] {
 		if err != nil {
 			return errors.ErrWait(err)
 		}
-		reply, err := output.Wait(c, ctx, "terminal_wait", term, c.Caller(ctx), in.Cursor, until, in.For, start)
+		reply, err := output.Wait(c, ctx, "terminal_wait", term, c.Caller(ctx), in.Cursor, in.Cursor, until, in.For, start)
 		if err != nil {
 			return errors.ErrWait(err)
 		}

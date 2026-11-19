@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -721,5 +722,26 @@ func TestEdgeAccessibilityLeavesTheRouteAlone(t *testing.T) {
 	}
 	if r.Route != RouteHTTP2 || len(r.Failed()) != 0 {
 		t.Errorf("route %s, failed %q: want the route the edge gives, unchanged", r.Route, r.Failed())
+	}
+}
+
+// TestReportJSON pins the shape --preflight -s prints: provider, route,
+// assessment, then each check's category, name, ok, warn, detail, hint
+// (left out when none) and decides; never Direct, which is the report's own
+// working.
+func TestReportJSON(t *testing.T) {
+	r := Report{Provider: "tunnel.pizza", Route: RouteRelay, Assessment: "tunneld will work here using …", Checks: []Check{
+		{Category: "Edge", Name: "HTTP/2", Detail: "dial tcp: i/o timeout", Hint: "allow TCP 7844", Decides: true, Direct: true},
+		{Category: "DNS", Name: "tunnel.pizza", OK: true, Detail: "104.21.0.1"},
+	}}
+	got, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"provider":"tunnel.pizza","route":"relay","assessment":"tunneld will work here using …","checks":[` +
+		`{"category":"Edge","name":"HTTP/2","ok":false,"warn":false,"detail":"dial tcp: i/o timeout","hint":"allow TCP 7844","decides":true},` +
+		`{"category":"DNS","name":"tunnel.pizza","ok":true,"warn":false,"detail":"104.21.0.1","decides":false}]}`
+	if string(got) != want {
+		t.Errorf("Report as JSON =\n%s\nwant\n%s", got, want)
 	}
 }

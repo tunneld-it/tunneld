@@ -58,6 +58,7 @@ func TestSays(t *testing.T) {
 		"Unlisted":       {Unlisted(fmt.Errorf("names origin 5")), []string{"names origin 5", "terminal_sessions lists the terminals"}},
 		"NotATerminal":   {NotATerminal("https://0tabc.tunneld.domain/", v1.Origin{Index: 0, URI: *shell, Scheme: v1.HttpScheme}), []string{"https://0tabc.tunneld.domain/ is not a terminal: origin 0 is http", "terminal_sessions lists the terminals"}},
 		"NoScope":        {NoScope("a_tool", "tunnel:exec"), []string{"This sign-in can't call a_tool", "a_tool needs the tunnel:exec scope"}},
+		"Busy":           {Busy("https://h/", "@7"), []string{"The shell at https://h/ is running a command, so a command line now would be typed into it", `Read it with terminal_wait, url https://h/ and cursor @7, until it ends; or stop it with terminal_exec and input [{"key":"Ctrl-C"}], which is sent while a command runs`}},
 		"NotAPattern":    {NotAPattern(fmt.Errorf("missing closing )")), []string{"until is not a regular expression: missing closing )", `until takes RE2 syntax: \s is ASCII only, \p{Zs} matches any space`}},
 		"NothingToSend":  {NothingToSend(), []string{"Nothing to send", "send input steps, a command, attachments, or a mix"}},
 		"BadAttachment":  {BadAttachment(fmt.Errorf("attachment 1: not a data: URI")), []string{"attachment 1: not a data: URI", "each attachment is an absolute path, a data: URI, and optionally an octal mode, 1 MiB in all"}},

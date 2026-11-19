@@ -316,6 +316,36 @@ It offers these tools so far:
 | `origin_add` | `tunnel:origins`, for a web address only; the client that started tunneld, over stdio, and the tunnel's secret need no token, and only they may add a program or a container; a token an unowned public tunnel let in is refused | adds an origin to the running tunnel at the next index, answering `{machine, session}`, the session's `address` its `?n`. `origin` is as the command line takes one: a web address (`:3000`, `https://api.example.com`), a program (`sh`, `exec:///bin/bash`), which starts at once, or a container (`attach://dockerd/web`). `headers` (optional, a web address only) is an object of header names to values, set on every request forwarded to it in place of any a visitor sent under those names, never logged or answered back; `Host` and the connection's own headers are refused. Every served origin is told its address again, since the first goes from the bare address to `?0` once there are two. An added origin does not change the hostname or the cache key, lasts as long as the run, does not count toward the run ending when its programs have, and is not drawn in the multiview panel. |
 | `origin_remove` | `tunnel:origins`, as for `origin_add` | not implemented yet: a tool error saying so, as `origin_add` does. It is to remove an origin, `origin` its index or public address, leaving its index a hole, answering `{machine, session}` |
 
+**Commands, and how they exit.** The shell tunneld starts marks its commands
+(OSC 133): a prompt, a command starting, and a command ending with its
+status. A terminal draws none of these. So a `terminal_exec` with a
+`command` is answered with `command_cursor` (where the line went in),
+`running`, and, once it has ended, `exit_code`. Its wait lasts until the
+command ends or `timeout_ms` passes, so the default 500 ms idle doesn't apply
+unless `idle_ms` is given. `terminal_read` and `terminal_wait` with
+`cursor: <command_cursor>` read that command's output from the start and
+answer the same three fields, and `terminal_wait` ends when the command does.
+A `command` sent while a command is running is refused, since it would be
+typed into the running program; the refusal names the running command's
+cursor. `input` alone (an answer to a prompt, `Ctrl-C`) is sent either way.
+
+The marks come from how the shell is started, and only when tunneld starts
+it with no arguments. The person's own startup file is read first each time:
+- bash: `--rcfile` with a file that reads `~/.bashrc`, adds the end mark to
+  `PROMPT_COMMAND`, and adds the start mark to `PS0` (bash 4.4 and later)
+- zsh: a `ZDOTDIR` whose files read your own `.zshenv`, `.zprofile` and
+  `.zshrc`, then add `precmd` and `preexec` hooks, and hand `ZDOTDIR` back
+- fish: `--init-command` with `fish_prompt` and `fish_preexec` handlers
+- sh, dash, ksh, mksh, ash: `ENV` naming a file that reads your own `$ENV`,
+  then carries the end mark and `$?` in `PS1`
+- the built-in Elvish shell: your own `rc.elv`, then `edit:` hooks
+
+A shell with no hook before a command (the POSIX shells, bash before 4.4)
+marks no start, so a command a person types there isn't seen as running,
+though one `terminal_exec` typed is. Where nothing is marked, a program
+other than a shell or a shell given arguments, the three fields are absent
+and nothing is refused.
+
 The terminal tools keep a read position per terminal for each sign-in: a
 token's `code_jti`, one per OAuth sign-in and kept across refreshes, or
 its `sub` and `act` when it has none, or the secret's own. A position
@@ -1040,7 +1070,7 @@ default.**
 | `-s`, `--silent` | `TUNNELD_SILENT` | Print only the address on stdout, once the tunnel is up, and none of tunneld's own lines on stderr: no banner, origin lines, spinner or stop hint, and no frame or tab. Errors, logs, a program's output and `--qr` still reach stderr. See [Output contract](#output-contract). **Default off.** |
 | `-d`, `--detach` | `TUNNELD_DETACH` | Run in the background: the run is started again in a session of its own, and the prompt comes back once its address is out, with a summary on stderr (none with `-s`). The same run already going is handed back instead. Not on Windows. See [In the background](#in-the-background). **Default off.** |
 | `-l`, `--list` | `TUNNELD_LIST` | List the runs registered on this machine, a line each, and exit; with `-s`, as one JSON array. Takes no origins. See [In the background](#in-the-background). **Default off.** |
-| `--preflight` | `TUNNELD_PREFLIGHT` | Check every network path a tunnel depends on, say which route a run would take, and exit; mints nothing and opens no tunnel. See [Preflight](#preflight). **Default off.** |
+| `--preflight` | `TUNNELD_PREFLIGHT` | Check every network path a tunnel depends on, say which route a run would take, and exit; mints nothing and opens no tunnel. With `-s`, the report as JSON. See [Preflight](#preflight). **Default off.** |
 | `--identity-providers` | `TUNNELD_IDENTITY_PROVIDERS` | Identity providers to find a mint credential with, all asked at once, the first in the list to find one winning. **Default `github,anthropic`**: `gh auth token` and then the GitHub environment variables, then a Claude Code workspace's OAuth token. Empty sends no credential. A name with no provider behind it is an error before the tunnel is minted, so a typo does not quietly send nothing. `LIBTUNNEL_TOKEN` outranks all of it. |
 
 So the whole thing runs from a container with no command line at all:
@@ -1634,6 +1664,17 @@ The report goes to stdout. Preflight is informational: when no route works,
 what failed is said on stderr as well, and the exit status is 0 either way, so
 a setup script that runs it is never failed by the report. A script that has
 to gate on the answer reads the `route:` line, `none` when nothing works.
+
+**`--preflight -s`** prints the report as one JSON object on stdout instead,
+once every check has resolved, and nothing on stderr. The exit status is 0 here
+too. `route` is `direct HTTP/2`, `relay` or `none`; `assessment` is the last
+line's sentence; `checks` are the lines in order, each with its `category`,
+`name`, `ok`, `warn`, `detail`, `hint` (left out when it has none) and
+`decides`, true for the checks the route rests on:
+
+```json
+{"provider":"tunnel.pizza","route":"direct HTTP/2","assessment":"tunneld will work here using a direct HTTPS mint to tunnel.pizza, DNS-over-HTTPS, and an address check on HTTPS 443, over direct HTTP/2 (TCP 7844).","checks":[{"category":"Network","name":"proxy","ok":true,"warn":false,"detail":"none: tunnel.pizza:443 goes direct","decides":false},…]}
+```
 
 | Check | What it asks | When it fails |
 | ----- | ------------ | ------------- |

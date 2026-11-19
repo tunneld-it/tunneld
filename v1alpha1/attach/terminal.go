@@ -33,6 +33,20 @@ type Terminal interface {
 	Wait(ctx context.Context, reader, cursor string, until *regexp.Regexp, idle time.Duration) (Output, bool, error)
 	// Screen is what the terminal shows now.
 	Screen() Screen
+	// Run is Send for a command line, and answers as well where the line went
+	// in: the cursor Command knows the command by.
+	Run(reader string, input ...Input) (from, typed string, err error)
+	// Running is the command the shell is running now, and whether one is, as
+	// a shell that marks its commands (OSC 133) says; never for one that does
+	// not.
+	Running() (Command, bool)
+	// Command is how the command line Run typed at cursor went: false for a
+	// cursor Run did not answer, one the log no longer keeps, or a shell that
+	// marks nothing.
+	Command(cursor string) (Command, bool)
+	// Ended closes once the command line Run typed at cursor has ended, or
+	// never, for one Command does not know; it stops watching when ctx ends.
+	Ended(ctx context.Context, cursor string) <-chan struct{}
 }
 
 // Input is one step of what Send sends: text as typed, or one key by name.
@@ -124,15 +138,56 @@ const enterGap = 100 * time.Millisecond
 // so what anyone else at the terminal did since comes before the reply, or
 // where the input went in for a reader that never read.
 func (s *session) Send(reader string, input ...Input) (string, error) {
+	from, _, err := s.send(reader, false, input...)
+	return from, err
+}
+
+// Run is Send, with where the line went in recorded and answered.
+func (s *session) Run(reader string, input ...Input) (string, string, error) {
+	return s.send(reader, true, input...)
+}
+
+// Running implements Terminal.
+func (s *session) Running() (Command, bool) { return s.out.running() }
+
+// Command implements Terminal.
+func (s *session) Command(cursor string) (Command, bool) { return s.out.command(cursor) }
+
+// Ended implements Terminal.
+func (s *session) Ended(ctx context.Context, cursor string) <-chan struct{} {
+	ended := make(chan struct{})
+	go func() {
+		for {
+			changed := s.out.changed()
+			c, ok := s.out.command(cursor)
+			if !ok {
+				return
+			}
+			if c.Ended() {
+				close(ended)
+				return
+			}
+			select {
+			case <-changed:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ended
+}
+
+// send is Send, and with run, Run: typed is where the input went in.
+func (s *session) send(reader string, run bool, input ...Input) (from, typed string, err error) {
 	events := make([]uv.KeyEvent, 0, len(input))
 	for i, in := range input {
 		switch {
 		case (in.Text == "") == (in.Key == ""):
-			return "", fmt.Errorf("%w, not both or neither: step %d", ErrBadInput, i+1)
+			return "", "", fmt.Errorf("%w, not both or neither: step %d", ErrBadInput, i+1)
 		case in.Key != "":
 			k, ok := keyNamed(in.Key)
 			if !ok {
-				return "", fmt.Errorf("%w %q: step %d", ErrUnknownKey, in.Key, i+1)
+				return "", "", fmt.Errorf("%w %q: step %d", ErrUnknownKey, in.Key, i+1)
 			}
 			events = append(events, uv.KeyPressEvent(k))
 		default:
@@ -140,8 +195,12 @@ func (s *session) Send(reader string, input ...Input) (string, error) {
 		}
 	}
 	s.revive()
-	from := s.out.since(reader, s.out.offset())
-	s.out.moved(reader, from)
+	at := s.out.offset()
+	at0 := s.out.since(reader, at)
+	s.out.moved(reader, at0)
+	if run {
+		typed = s.out.typed(at)
+	}
 	for i, ev := range events {
 		if ev == nil {
 			s.em.SendText(input[i].Text)
@@ -155,7 +214,7 @@ func (s *session) Send(reader string, input ...Input) (string, error) {
 			time.Sleep(escapeGap)
 		}
 	}
-	return s.out.cursor(from), nil
+	return s.out.cursor(at0), typed, nil
 }
 
 // Read reads the output log from cursor, or reader's position.

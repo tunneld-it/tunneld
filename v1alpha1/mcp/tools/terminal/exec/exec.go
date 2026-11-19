@@ -21,7 +21,7 @@ import (
 var Tool = tool.New(sdk.Tool{
 	Name:        "terminal_exec",
 	Title:       "Run in a terminal",
-	Description: "Types input into a terminal on this machine, at url, then waits for the reply as terminal_wait does. It first writes attachments, files such as a script, to this machine; that write is not shown in the terminal, so the command should name what it runs (sh /tmp/probe.sh). Needs the scope of the origin's scheme: tunnel:exec for a program.",
+	Description: "Types input into a terminal on this machine, at url, then waits for the reply as terminal_wait does. It first writes attachments, files such as a script, to this machine; that write is not shown in the terminal, so the command should name what it runs (sh /tmp/probe.sh). In a shell that marks its commands, as tunneld's own shell does, a command line is answered with command_cursor, running and exit_code, the wait lasts until the command ends unless idle_ms says otherwise, and a command line sent while one runs is refused; input alone, an answer or Ctrl-C, still goes through. Needs the scope of the origin's scheme: tunnel:exec for a program.",
 	Annotations: &sdk.ToolAnnotations{DestructiveHint: new(true), OpenWorldHint: new(false)},
 }, run())
 
@@ -56,6 +56,12 @@ func run() tool.RunFunc[In, types.Reply] {
 		if err != nil {
 			return errors.ErrExec(err)
 		}
+		// A command line would be typed into the command running, not the
+		// shell; input alone goes through, to answer it or press Ctrl-C.
+		if running, busy := term.Running(); busy && in.Command != "" {
+			c.Logged(ctx, "terminal_exec", "refused", start)
+			return errors.ErrExec(refusals.Busy(in.URL, running.CommandCursor))
+		}
 		files, err := prepare(in.Attachments)
 		if err != nil {
 			c.Logged(ctx, "terminal_exec", "refused", start)
@@ -74,16 +80,25 @@ func run() tool.RunFunc[In, types.Reply] {
 			return nil, types.Reply{}, nil
 		}
 		reader := c.Caller(ctx)
-		sent, err := term.Send(reader, input...)
+		var sent, typed string
+		if in.Command != "" {
+			sent, typed, err = term.Run(reader, input...)
+		} else {
+			sent, err = term.Send(reader, input...)
+		}
 		if err != nil {
 			c.Logged(ctx, "terminal_exec", "refused", start)
 			return errors.ErrExec(refusals.Unsendable(err))
 		}
 		if in.Until == "" && in.IdleMs != nil && *in.IdleMs == 0 {
 			c.Logged(ctx, "terminal_exec", "sent", start)
-			return nil, types.Reply{Output: attach.Output{Cursor: sent}}, nil
+			reply := types.Reply{Output: attach.Output{Cursor: sent}}
+			if state, ok := term.Command(typed); ok {
+				reply.Command = &state
+			}
+			return nil, reply, nil
 		}
-		reply, err := output.Wait(c, ctx, "terminal_exec", term, reader, sent, until, in.For, start)
+		reply, err := output.Wait(c, ctx, "terminal_exec", term, reader, sent, typed, until, in.For, start)
 		if err != nil {
 			return errors.ErrExec(err)
 		}

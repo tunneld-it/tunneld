@@ -655,6 +655,9 @@ func (s *session) said(seq Sequence) {
 		switch {
 		case names(seq.Cmd):
 			s.setName(seq.Cmd, string(seq.Data))
+		case seq.Cmd == 133:
+			// The shell marking its prompt and commands: the log keeps it.
+			s.out.osc133(seq.Data)
 		case paints(seq.Cmd) || seq.Cmd < 0:
 			// The emulator's, verbatim: a hyperlink becomes cell links it
 			// draws, a colour query one it answers. An OSC with no numeric

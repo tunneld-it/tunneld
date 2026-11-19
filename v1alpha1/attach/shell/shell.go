@@ -152,6 +152,10 @@ type TargetImpl struct {
 	dir  string
 	runs int
 
+	// rc is where a shell's marks (integrated) are written, made on the first
+	// run and removed by Close.
+	rc string
+
 	// mu guards the running process and its terminal, which exist only
 	// between an attach starting and either end of it finishing. Close can
 	// arrive from a different goroutine at any point in that window — a
@@ -241,7 +245,24 @@ func (a *TargetImpl) Close() error {
 		_ = os.RemoveAll(a.dir)
 		a.dir = ""
 	}
+	if a.rc != "" {
+		_ = os.RemoveAll(a.rc)
+		a.rc = ""
+	}
 	return err
+}
+
+// marked is what the program is run with: a shell given no arguments marks
+// its commands (integrated), anything else is as it is.
+func (a *TargetImpl) marked(env []string) ([]string, []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.rc == "" && len(a.args) == 0 && !a.closed {
+		if d, err := os.MkdirTemp("", "tunneld-marks-"); err == nil {
+			a.rc = d
+		}
+	}
+	return integrated(a.rc, a.path, a.args, env)
 }
 
 // endGrace is how long End gives a program to leave on SIGTERM before it is
@@ -333,11 +354,12 @@ func (a *TargetImpl) AttachContainer(ctx context.Context, _, _, _ string, in io.
 	if pipes {
 		return a.attachPipes(ctx, in, out, errw, resize)
 	}
-	cmd := exec.CommandContext(ctx, a.path, a.args...)
 	// TERM is what makes a full-screen program willing to draw. The value is
 	// the one the page's terminal emulator implements, and the same one the
 	// frame announces to a container.
-	cmd.Env = append(environ(), "TERM=xterm-256color")
+	args, env := a.marked(append(environ(), "TERM=xterm-256color"))
+	cmd := exec.CommandContext(ctx, a.path, args...)
+	cmd.Env = env
 
 	term, slave, err := a.open()
 	if err != nil {

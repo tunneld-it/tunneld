@@ -83,6 +83,37 @@ func TestPreflightIsInformational(t *testing.T) {
 	}
 }
 
+// TestPreflightSilentIsJSON pins --preflight -s: the report as one JSON
+// object on stdout, nothing on stderr, and still no error, with no route.
+func TestPreflightSilentIsJSON(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var out, errOut bytes.Buffer
+	cmd := New().Command()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"--preflight", "-s", "--provider", "127.0.0.1:1"})
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("--preflight -s with no route = %v, want nil", err)
+	}
+	var r struct {
+		Provider, Route, Assessment string
+		Checks                      []struct {
+			Category, Name, Detail string
+			OK                     bool
+		}
+	}
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%s", err, out.String())
+	}
+	if r.Route != "none" || r.Provider != "127.0.0.1:1" || !strings.HasPrefix(r.Assessment, "tunneld will not work here") || len(r.Checks) == 0 {
+		t.Errorf("report = %+v, want route none, its provider, the assessment and the checks", r)
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing", errOut.String())
+	}
+}
+
 // TestOptionsLand pins that every builder option reaches the field the flag
 // binds over. Name through Name, the writers through cobra, the flag-backed
 // knobs through their defaults, and the origins through the field they seed —

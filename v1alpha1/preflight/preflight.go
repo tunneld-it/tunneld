@@ -43,31 +43,32 @@ const (
 )
 
 // Check is one line of the report. Hint is what to ask of whoever controls
-// the network when it fails.
+// the network when it fails. Encoded as --preflight -s prints it.
 type Check struct {
 	// Category is the heading the check is printed under: Network, DNS,
 	// Edge or Install.
-	Category string
-	Name     string
-	OK       bool
+	Category string `json:"category"`
+	Name     string `json:"name"`
+	OK       bool   `json:"ok"`
 	// Warn is a check that passed with something worth knowing, its Hint.
-	Warn   bool
-	Detail string
-	Hint   string
+	Warn   bool   `json:"warn"`
+	Detail string `json:"detail"`
+	Hint   string `json:"hint,omitempty"`
 	// Direct is set by the check made without the proxy when it got through.
-	Direct bool
+	Direct bool `json:"-"`
 	// Decides is set on the checks the route and the assessment are settled
 	// from. Every other check is informational.
-	Decides bool
+	Decides bool `json:"decides"`
 }
 
 // Report is every check in the order run, the route they add up to, and
-// one sentence saying whether tunneld will work here and how.
+// one sentence saying whether tunneld will work here and how. Encoded as
+// --preflight -s prints it.
 type Report struct {
-	Provider   string
-	Checks     []Check
-	Route      Route
-	Assessment string
+	Provider   string  `json:"provider"`
+	Route      Route   `json:"route"`
+	Assessment string  `json:"assessment"`
+	Checks     []Check `json:"checks"`
 }
 
 // mintSteps are the checks a run's mint stands on, in the order it takes

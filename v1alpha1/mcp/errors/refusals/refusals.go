@@ -63,6 +63,13 @@ func NoScope(tool, scope string) error {
 		fmt.Errorf("This sign-in can't call %s", tool))
 }
 
+// Busy is the refusal for a command line sent to the terminal at url while
+// the shell there runs the command typed at cursor.
+func Busy(url, cursor string) error {
+	return refusal(fmt.Sprintf(`Read it with terminal_wait, url %s and cursor %s, until it ends; or stop it with terminal_exec and input [{"key":"Ctrl-C"}], which is sent while a command runs`, url, cursor),
+		fmt.Errorf("The shell at %s is running a command, so a command line now would be typed into it", url))
+}
+
 // NotAPattern is the refusal for an until that does not compile, err saying
 // why.
 func NotAPattern(err error) error {

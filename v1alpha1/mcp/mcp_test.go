@@ -3,11 +3,15 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -313,6 +317,106 @@ func TestAShellAddedOverMcp(t *testing.T) {
 	}
 	if raw, _ := json.Marshal(res.StructuredContent); !strings.Contains(string(raw), `"matched":true`) {
 		t.Errorf("terminal_exec on the added shell = %s, want 42 matched", raw)
+	}
+}
+
+// TestShellsMarkTheirCommands drives each shell on this machine through the
+// tools, as an agent does: a command line answers how it exited; one still
+// running answers running and its cursor, a second line is refused while it
+// runs and Ctrl-C is not, and a wait or a read from that cursor answers how it
+// ended.
+func TestShellsMarkTheirCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no shells to mark")
+	}
+	home := t.TempDir()
+	for name, body := range map[string]string{".bashrc": "rc_read=bashrc\n", ".zshrc": "rc_read=zshrc\n", ".shrc": "rc_read=shrc\n"} {
+		if err := os.WriteFile(filepath.Join(home, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", "")
+	t.Setenv("ENV", filepath.Join(home, ".shrc"))
+	for _, name := range []string{"bash", "zsh", "dash", "ksh", "mksh", "sh", "fish"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			list := origins.New(origins.WithOrigins(tooltest.Origins(t, "exec://"+path).All()...))
+			attached, err := attach.New(attach.WithTargets(shell.New())).Attach(t.Context(), list, slog.New(slog.DiscardHandler))
+			if err != nil {
+				t.Fatalf("Attach: %v", err)
+			}
+			defer func() { _ = attached.Close() }()
+			cs := connect(t, New(WithOrigins(list), WithAttached(attached)))
+			const url = "https://0tabc.tunneld.domain/"
+			call := func(tool string, args map[string]any) map[string]any {
+				t.Helper()
+				res, err := cs.CallTool(t.Context(), &sdk.CallToolParams{Name: tool, Arguments: args})
+				if err != nil {
+					t.Fatalf("%s: %v", tool, err)
+				}
+				raw, _ := json.Marshal(res.StructuredContent)
+				var out map[string]any
+				_ = json.Unmarshal(raw, &out)
+				if res.IsError {
+					out = map[string]any{"error": res.Content[0].(*sdk.TextContent).Text}
+				}
+				return out
+			}
+			// The first prompt, which the shell marks before it draws it.
+			term, _ := attached.Terminal(0)
+			for deadline := time.Now().Add(10 * time.Second); ; {
+				if out, _ := term.Read("probe", ""); strings.TrimSpace(out.Text) != "" {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no prompt")
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			own := call("terminal_exec", map[string]any{"url": url, "command": "echo read:$rc_read", "timeout_ms": 5000})
+			if text := fmt.Sprint(own["text"]); name != "fish" && !regexp.MustCompile(`(?m)^read:(bash|zsh|sh)rc$`).MatchString(text) {
+				t.Errorf("echo read:$rc_read = %q, want the shell's own rc read first", text)
+			}
+
+			got := call("terminal_exec", map[string]any{"url": url, "command": "sh -c 'exit 7'", "timeout_ms": 5000})
+			if got["exit_code"] != float64(7) || got["running"] != false || got["command_cursor"] == nil {
+				t.Fatalf("sh -c 'exit 7' = %v, want exit_code 7, not running, a command_cursor", got)
+			}
+
+			slow := call("terminal_exec", map[string]any{"url": url, "command": "sleep 2", "timeout_ms": 300})
+			if slow["running"] != true || slow["exit_code"] != nil || slow["timed_out"] != true {
+				t.Fatalf("sleep 2 after 300ms = %v, want running, no exit_code, timed out", slow)
+			}
+			if refused := call("terminal_exec", map[string]any{"url": url, "command": "echo no"}); !strings.Contains(fmt.Sprint(refused["error"]), "is running a command") {
+				t.Errorf("a command line while sleep runs = %v, want it refused", refused)
+			}
+			cursor := slow["command_cursor"]
+			waited := call("terminal_wait", map[string]any{"url": url, "cursor": cursor, "timeout_ms": 5000})
+			if waited["exit_code"] != float64(0) || waited["running"] != false || waited["timed_out"] != false {
+				t.Errorf("terminal_wait from the command's cursor = %v, want it ended 0", waited)
+			}
+			read := call("terminal_read", map[string]any{"url": url, "cursor": cursor})
+			if read["exit_code"] != float64(0) || read["running"] != false {
+				t.Errorf("terminal_read from the command's cursor = %v, want it ended 0", read)
+			}
+
+			stuck := call("terminal_exec", map[string]any{"url": url, "command": "sleep 30", "timeout_ms": 300})
+			if stuck["running"] != true {
+				t.Fatalf("sleep 30 = %v, want running", stuck)
+			}
+			if stopped := call("terminal_exec", map[string]any{"url": url, "input": []map[string]any{{"key": "Ctrl-C"}}, "timeout_ms": 3000, "until": "\\S"}); stopped["error"] != nil {
+				t.Errorf("Ctrl-C while running = %v, want it sent", stopped)
+			}
+			ended := call("terminal_wait", map[string]any{"url": url, "cursor": stuck["command_cursor"], "timeout_ms": 5000})
+			if ended["running"] != false || ended["exit_code"] == nil || ended["exit_code"] == float64(0) {
+				t.Errorf("sleep 30 after Ctrl-C = %v, want it ended, not 0", ended)
+			}
+		})
 	}
 }
 
