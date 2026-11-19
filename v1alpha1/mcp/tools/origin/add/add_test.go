@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -80,10 +81,11 @@ func TestOriginAddGate(t *testing.T) {
 
 // TestOriginAdd pins an add: a web address joins the run
 // at the next index, marked added, with the headers given, canonical, and
-// answers its session and address, the headers never in the answer.
+// answers its session and address, the headers never in the answer; the
+// run's file then lists it, for -l.
 func TestOriginAdd(t *testing.T) {
 	list := origins.New(origins.WithOrigins(tooltest.Origins(t, "http://localhost:3000").All()...))
-	tracked := cache.New(cache.WithDir(""), cache.WithTracking(map[string]string{"LIBTUNNEL_HOSTNAME": "0tabc.tunneld.domain"}))
+	tracked := cache.New(cache.WithDir(t.TempDir()), cache.WithOrigins(list), cache.WithSpec(`{"spec":{}}`), cache.WithTracking(map[string]string{"LIBTUNNEL_HOSTNAME": "0tabc.tunneld.domain"}))
 	c := tool.Context{Origins: list, Cache: tracked, Log: slog.New(slog.DiscardHandler)}
 
 	r, out, err := run()(c, t.Context(), &sdk.CallToolRequest{}, In{
@@ -108,6 +110,9 @@ func TestOriginAdd(t *testing.T) {
 	}
 	if answer, _ := json.Marshal(out); strings.Contains(string(answer), "the token") {
 		t.Errorf("answer %s carries a header's value", answer)
+	}
+	if file, _ := os.ReadFile(tracked.Path(list)); !strings.Contains(string(file), "TUNNELD_ADDED_ORIGINS='https://04d0ee3e.lambda-microvm.us-east-1.on.aws'") || strings.Contains(string(file), "the token") {
+		t.Errorf("the run's file =\n%s\nwant the added origin, and no header's value", file)
 	}
 	for i, word := range []string{":4000", "http://web:3000", "http://10.0.0.5:8080"} {
 		_, out, _ := run()(c, t.Context(), &sdk.CallToolRequest{}, In{Origin: word})

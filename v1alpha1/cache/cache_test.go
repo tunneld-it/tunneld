@@ -143,7 +143,7 @@ func TestString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if got := cache.New(cache.WithSpec(envelope), cache.WithTracking(tracking)).String(); got != string(body) {
+	if got := cache.New(cache.WithOrigins(o), cache.WithSpec(envelope), cache.WithTracking(tracking)).String(); got != string(body) {
 		t.Errorf("String() =\n%s\nwant what Save wrote:\n%s", got, body)
 	}
 	if got := cache.New(cache.WithTracking(tracking)).String(); got != "" {
@@ -564,7 +564,6 @@ func TestSaveRecordsWhatTheRunWas(t *testing.T) {
 	c.Save(cache.WithOrigins(o), cache.WithSpec(envelope), cache.WithTracking(map[string]string{
 		ltv1.HostnameEnv:             "brave-otter.tunneld.domain",
 		"PWD":                        "/work/project",
-		"TUNNELD_ORIGINS":            "http://localhost:3000",
 		"TUNNELD_LOG":                "debug",
 		"TUNNELD_PROVIDER":           "tunnel.pizza",
 		"TUNNELD_MULTIVIEW":          "true",
@@ -612,6 +611,27 @@ func TestSaveRecordsWhatTheRunWas(t *testing.T) {
 	// everything else on the disk.
 	if got := c.Load(cache.WithOrigins(o), cache.WithLog(discard())); got != envelope {
 		t.Errorf("Load() = %q, want the spec and nothing else read back", got)
+	}
+}
+
+// TestSaveRecordsAddedOrigins pins the origins lines: the run's origins as
+// they are at each save, those it was started with, then those origin_add
+// added, in index order, in the same file, since an added origin leaves the
+// key as it was.
+func TestSaveRecordsAddedOrigins(t *testing.T) {
+	c, o, path := fixed(t, "http://localhost:3000")
+	c.Save(cache.WithOrigins(o), cache.WithSpec(envelope), cache.WithTracking(map[string]string{v1.OriginsEnv: "not what the run serves"}), cache.WithLog(discard()))
+	o.Append(run(t, "http://localhost:8000").All()[0])
+	c.Save()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, want := range []string{"TUNNELD_ORIGINS='http://localhost:3000'\n", "TUNNELD_ADDED_ORIGINS='http://localhost:8000'\n"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("cache file does not carry %q:\n%s", want, body)
+		}
 	}
 }
 

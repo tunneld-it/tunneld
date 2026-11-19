@@ -35,6 +35,6 @@ func run() tool.RunFunc[In, types.Screen] {
 			return errors.ErrScreen(err)
 		}
 		c.Logged(ctx, "terminal_screen", "read", start)
-		return nil, term.Screen(), nil
+		return nil, types.Screen{Screen: term.Screen()}, nil
 	}
 }

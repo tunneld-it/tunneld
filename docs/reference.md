@@ -313,7 +313,7 @@ It offers these tools so far:
 | `terminal_read` | the scope of the origin's scheme: `tunnel:exec` for a program | what the program at `url` has printed, at once, `{text, cursor, dropped, truncated}`: read on from where this sign-in last stopped, or from `cursor` when given (the first read starts from everything kept, the last 1 MiB at least); `text` is its output as the terminal shows it, a line the terminal wrapped kept whole; a row is logged once it settles (it scrolls off, a read or wait answers it, input goes in, or the screen is erased), so rows a program redraws in place (a spinner) come once, as they last stood; faint text from the cursor on, on the line in progress, is a suggestion, not input, and is left out; a full-screen program's screen is not kept, so what is needed from `screen` is read when it comes; a program that repaints everything it has shown (Claude Code's Ctrl-L) brings old rows back into the log; then the cursor's row as far as the cursor; while a full-screen program is up it leaves no text, and the answer carries `screen`, as `terminal_screen` gives it; `cursor` is where the read stopped; `dropped` says output was no longer kept, so some was missed; `text` past 64 KiB keeps its end and says `truncated`. A `cursor` from another terminal, or from before tunneld started again, is a tool error |
 | `terminal_wait` | the scope of the origin's scheme: `tunnel:exec` for a program | `terminal_read`, once `until`, an RE2 regular expression, matches the text, the program prints nothing for `idle_ms` (left out, 500 without `until` and 0 with it, so a pause in the output does not end a wait for a match; 0 never), or `timeout_ms` passes (10000 when left out, at most 25000), `{text, cursor, dropped, matched, timed_out, truncated}`; neither `matched` nor `timed_out` means it fell quiet. A match answers once the screen has been unchanged for 50 ms (at most 250 ms), so a row a program is part way through redrawing is not answered torn. While a full-screen program is up, `until` matches the screen's rows and `idle_ms` counts from the screen's last change. A bad `until` is a tool error |
 | `terminal_exec` | the scope of the origin's scheme: `tunnel:exec` for a program | types into the terminal at `url`, as the person at it would and in their view, then waits for the reply as `terminal_wait` does, from where this sign-in last read (so what anyone else at the terminal did since comes first; for a sign-in that never read, from where the input went in), answering as it does; `idle_ms: 0` with no `until` answers at once, reading nothing. `input` is a list of steps sent in order, each exactly one of `{text}`, typed as it is, or `{key}`, one key by name (`Enter`, `Tab`, `Esc`, `Backspace`, `Delete`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `F1` to `F12`, `Ctrl-<letter>`), so `[{"key":"Esc"},{"text":":wq"},{"key":"Enter"}]` leaves vim; an `Esc` with steps after it goes alone, 150 ms ahead of them, so a program does not read it and the next key as Alt (the gap is only within one call); an `Enter` right after text goes 100 ms after it, so a program that tells a paste by its speed reads a key press, not a newline in a paste; a step it cannot send, or a bad `until`, sends nothing. `command` is a line typed after `input`, then `Enter`. `attachments`, `[{path, data, mode}]`, are files written to this machine before anything is typed, so a script travels as data and only the line that runs it is typed (`sh /tmp/probe.sh`): `path` absolute, missing directories made 0700, a file already there replaced; `data` a `data:` URI, base64 (`data:text/x-shellscript;base64,...`) or percent-encoded; `mode` octal, 0600 when left out; 1 MiB in all. Each is written to a temporary file beside it and renamed into place, so nothing runs one half written. The write is not shown in the terminal, so the command names what it runs. A bad attachment refuses the call before anything is written; attachments alone are written and nothing is typed. A program that has exited and can run again is started again first, as a tab arriving does. An agent is no viewer: it has no say in the terminal's size |
-| `origin_add` | `tunnel:origins`, for a web address only; the client that started tunneld, over stdio, and the tunnel's secret need no token, and only they may add a program or a container; a token an unowned public tunnel let in is refused | adds an origin to the running tunnel at the next index, answering `{machine, session}`, the session's `address` its `?n`. `origin` is as the command line takes one: a web address (`:3000`, `https://api.example.com`), a program (`sh`, `exec:///bin/bash`), which starts at once, or a container (`attach://dockerd/web`). `headers` (optional, a web address only) is an object of header names to values, set on every request forwarded to it in place of any a visitor sent under those names, never logged or answered back; `Host` and the connection's own headers are refused. Every served origin is told its address again, since the first goes from the bare address to `?0` once there are two. An added origin does not change the hostname or the cache key, lasts as long as the run, does not count toward the run ending when its programs have, and is not drawn in the multiview panel. |
+| `origin_add` | `tunnel:origins`, for a web address only; the client that started tunneld, over stdio, and the tunnel's secret need no token, and only they may add a program or a container; a token an unowned public tunnel let in is refused | adds an origin to the running tunnel at the next index, answering `{machine, session}`, the session's `address` its `?n`. `origin` is as the command line takes one: a web address (`:3000`, `https://api.example.com`), a program (`sh`, `exec:///bin/bash`), which starts at once, or a container (`attach://dockerd/web`). `headers` (optional, a web address only) is an object of header names to values, set on every request forwarded to it in place of any a visitor sent under those names, never logged or answered back; `Host` and the connection's own headers are refused. Every served origin is told its address again, since the first goes from the bare address to `?0` once there are two. An added origin does not change the hostname or the cache key, is listed by `-l` with the run's own, lasts as long as the run, does not count toward the run ending when its programs have, and is not drawn in the multiview panel. |
 | `origin_remove` | `tunnel:origins`, as for `origin_add` | not implemented yet: a tool error saying so, as `origin_add` does. It is to remove an origin, `origin` its index or public address, leaving its index a hole, answering `{machine, session}` |
 
 **Commands, and how they exit.** The shell tunneld starts marks its commands
@@ -353,6 +353,39 @@ unused for an hour is forgotten. Every session an app runs under one
 sign-in shares it, so an agent that may share a terminal with another
 passes back the `cursor` each answer gives, which reads from where it says
 whatever the position.
+
+**Refusals, as data.** A tool error tunneld refuses a call with is texts
+for the model to read, what went wrong and then what to do, and, in
+`structuredContent`, the tool's output with `refusal` set and the rest empty.
+`refusal` is `{code, ...}`: a code that does not change, and the values the
+texts name. It never names a tool, so a client relaying the tools under its
+own names can write its own message. A tool error without `refusal` is
+tunneld failing, not refusing.
+
+| `code` | Fields | Why |
+|---|---|---|
+| `not_implemented` | | the tool is not there yet |
+| `no_terminal` | | the run serves no program or container |
+| `unlisted` | `url`, `reason` | `url` names no origin of the run |
+| `not_a_terminal` | `url`, `index`, `scheme` | origin `index` is dialed, not a terminal |
+| `no_scope` | `scope` | the token lacks `scope` |
+| `shell_busy` | `url`, `command_cursor`, `interrupt` | a command line while a command runs; read from `command_cursor` to wait for it, or send `interrupt` as input alone |
+| `not_a_pattern` | `until`, `reason` | `until` is not RE2 |
+| `stale_cursor` | `cursor` | `cursor` is another terminal's, or from before tunneld started again |
+| `bad_cursor` | `cursor` | `cursor` is not one |
+| `unreadable` | `cursor`, `reason` | the read failed otherwise |
+| `nothing_to_send` | | no input, command or attachments |
+| `bad_attachment` | `path`, `reason` | the attachment at `path` is refused, nothing written; no `path` when it is their size |
+| `unwritable` | `reason` | the attachments could not be written; nothing typed |
+| `unsendable` | `reason` | an input step is not exactly one of text or a known key |
+| `undiscoverable` | | an unowned public tunnel is not listed |
+| `unowned` | | nobody may change an unowned tunnel's origins |
+| `origins_fixed` | | this run cannot serve a program or container it was not started with |
+| `not_an_origin` | `origin` | `origin` reads as no origin |
+| `serves_by_sign_in` | `origin`, `scheme` | a sign-in adds web addresses only |
+| `unserved` | `origin`, `reason` | the program or container could not be stood up |
+| `bad_header` | `header`, `reason` | a header a request cannot carry, or one tunneld sets |
+| `unknown_scheme` | `scheme` | no origin has `scheme` |
 
 The secret opens every tool. A token opens a tool only with the scope it
 needs, if it needs one: without it, the call answers a tool error naming the scope, so the
@@ -1171,7 +1204,8 @@ yet.
 
 **`-l` lists every run.** `-l`, `--list` or `TUNNELD_LIST`, with no origins.
 A line each on stdout: the pid, then the address, directory and origins from
-the run's cached settings, or its key under `--no-cache`:
+the run's cached settings, or its key under `--no-cache`. The origins are
+the ones the run serves, those `origin_add` added included, in index order:
 
 ```
 73146  https://0tc62f7m9b.tunneld.domain/  ~/project  http://localhost:3000, /bin/bash
@@ -1181,7 +1215,7 @@ the run's cached settings, or its key under `--no-cache`:
 With `-s`, it is one JSON array on stdout instead, `[]` for none, for a
 script: each run's `pid` and `key`, then, those it has, its `address`, the
 `addresses` of its origins as a run prints them, its directory as `cwd`, its
-`origins` as settled, and the paths of its settings file, `env`, and its
+`origins` as served, and the paths of its settings file, `env`, and its
 `log`. Every path is absolute. The settings file's path, never what it
 holds, since the spec is one of the settings:
 

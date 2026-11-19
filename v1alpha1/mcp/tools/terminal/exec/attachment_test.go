@@ -41,7 +41,7 @@ func TestDecode(t *testing.T) {
 func TestPrepare(t *testing.T) {
 	dir := t.TempDir()
 	at := func(name string) string { return filepath.Join(dir, name) }
-	files, err := prepare([]Attachment{
+	files, _, err := prepare([]Attachment{
 		{Path: at("probe.sh"), Data: "data:,echo%20hi"},
 		{Path: at("x/run.sh"), Data: "data:;base64,aGk=", Mode: "0755"},
 		{Path: at("y"), Data: "data:,", Mode: "644"},
@@ -59,19 +59,20 @@ func TestPrepare(t *testing.T) {
 	for name, tc := range map[string]struct {
 		as   []Attachment
 		says string
+		path string
 	}{
-		"a relative path": {[]Attachment{{Path: at("ok"), Data: "data:,"}, {Path: "probe.sh", Data: "data:,"}}, `attachment 2: "probe.sh" is not an absolute path`},
-		"no path":         {[]Attachment{{Data: "data:,"}}, `attachment 1: "" is not an absolute path`},
-		"a directory":     {[]Attachment{{Path: dir, Data: "data:,"}}, "attachment 1: " + dir + " is a directory"},
-		"not a data URI":  {[]Attachment{{Path: at("a"), Data: "echo hi"}}, "attachment 1: not a data: URI"},
-		"a bad mode":      {[]Attachment{{Path: at("a"), Data: "data:,", Mode: "rwx"}}, `attachment 1: mode "rwx" is not octal`},
-		"a mode too wide": {[]Attachment{{Path: at("a"), Data: "data:,", Mode: "4755"}}, `attachment 1: mode "4755" is not octal`},
-		"more than a MiB": {[]Attachment{{Path: at("a"), Data: big}}, "more than 1 MiB"},
-		"more, together":  {[]Attachment{{Path: at("a"), Data: "data:;base64," + strings.Repeat("A", maxAttachments/3*4/2+8)}, {Path: at("b"), Data: "data:;base64," + strings.Repeat("A", maxAttachments/3*4/2+8)}}, "more than 1 MiB"},
+		"a relative path": {[]Attachment{{Path: at("ok"), Data: "data:,"}, {Path: "probe.sh", Data: "data:,"}}, `attachment 2: "probe.sh" is not an absolute path`, "probe.sh"},
+		"no path":         {[]Attachment{{Data: "data:,"}}, `attachment 1: "" is not an absolute path`, ""},
+		"a directory":     {[]Attachment{{Path: dir, Data: "data:,"}}, "attachment 1: " + dir + " is a directory", dir},
+		"not a data URI":  {[]Attachment{{Path: at("a"), Data: "echo hi"}}, "attachment 1: not a data: URI", at("a")},
+		"a bad mode":      {[]Attachment{{Path: at("a"), Data: "data:,", Mode: "rwx"}}, `attachment 1: mode "rwx" is not octal`, at("a")},
+		"a mode too wide": {[]Attachment{{Path: at("a"), Data: "data:,", Mode: "4755"}}, `attachment 1: mode "4755" is not octal`, at("a")},
+		"more than a MiB": {[]Attachment{{Path: at("a"), Data: big}}, "more than 1 MiB", ""},
+		"more, together":  {[]Attachment{{Path: at("a"), Data: "data:;base64," + strings.Repeat("A", maxAttachments/3*4/2+8)}, {Path: at("b"), Data: "data:;base64," + strings.Repeat("A", maxAttachments/3*4/2+8)}}, "more than 1 MiB", ""},
 	} {
-		_, err := prepare(tc.as)
-		if !errors.Is(err, ErrBadAttachment) || !strings.Contains(err.Error(), tc.says) {
-			t.Errorf("%s: prepare = %v, want ErrBadAttachment saying %q", name, err, tc.says)
+		_, path, err := prepare(tc.as)
+		if !errors.Is(err, ErrBadAttachment) || !strings.Contains(err.Error(), tc.says) || path != tc.path {
+			t.Errorf("%s: prepare = %q, %v; want %q and ErrBadAttachment saying %q", name, path, err, tc.path, tc.says)
 		}
 	}
 }

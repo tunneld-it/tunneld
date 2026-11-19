@@ -1,6 +1,7 @@
 // Package errors is how an MCP tool answers when it refuses a call: each
-// tool's Err answers a refusals.Refusal as a tool error, for the model to
-// read, not a JSON-RPC error. Logging the call as refused is the caller's.
+// tool's Err answers a refusals.Refusal as a tool error, its texts for the
+// model to read and its detail in the output as refusal, not a JSON-RPC
+// error. Logging the call as refused is the caller's.
 package errors
 
 import (
@@ -12,51 +13,58 @@ import (
 )
 
 // answer is err as a tool's answer: a refusal a tool error with a text for
-// each of its reasons and the empty output; anything else the Go error it is.
-func answer[Out any](err error) (*sdk.CallToolResult, Out, error) {
-	var out Out
+// each of its reasons and its detail, for the output to carry; anything else
+// the Go error it is.
+func answer(err error) (*sdk.CallToolResult, *refusals.Detail, error) {
 	var refusal refusals.Refusal
 	if !errors.As(err, &refusal) {
-		return nil, out, err
+		return nil, nil, err
 	}
-	content := make([]sdk.Content, len(refusal))
-	for i, reason := range refusal {
+	content := make([]sdk.Content, len(refusal.Reasons))
+	for i, reason := range refusal.Reasons {
 		content[i] = &sdk.TextContent{Text: reason.Error()}
 	}
-	return &sdk.CallToolResult{IsError: true, Content: content}, out, nil
+	return &sdk.CallToolResult{IsError: true, Content: content}, &refusal.Detail, nil
 }
 
 // ErrExec is err as terminal_exec's answer.
 func ErrExec(err error) (*sdk.CallToolResult, types.Reply, error) {
-	return answer[types.Reply](err)
+	r, detail, err := answer(err)
+	return r, types.Reply{Refusal: detail}, err
 }
 
 // ErrOriginAdd is err as origin_add's answer.
 func ErrOriginAdd(err error) (*sdk.CallToolResult, types.Origin, error) {
-	return answer[types.Origin](err)
+	r, detail, err := answer(err)
+	return r, types.Origin{Refusal: detail}, err
 }
 
 // ErrOriginRemove is err as origin_remove's answer.
 func ErrOriginRemove(err error) (*sdk.CallToolResult, types.Origin, error) {
-	return answer[types.Origin](err)
+	r, detail, err := answer(err)
+	return r, types.Origin{Refusal: detail}, err
 }
 
 // ErrRead is err as terminal_read's answer.
 func ErrRead(err error) (*sdk.CallToolResult, types.Read, error) {
-	return answer[types.Read](err)
+	r, detail, err := answer(err)
+	return r, types.Read{Refusal: detail}, err
 }
 
 // ErrScreen is err as terminal_screen's answer.
 func ErrScreen(err error) (*sdk.CallToolResult, types.Screen, error) {
-	return answer[types.Screen](err)
+	r, detail, err := answer(err)
+	return r, types.Screen{Refusal: detail}, err
 }
 
 // ErrSessions is err as terminal_sessions' answer.
 func ErrSessions(err error) (*sdk.CallToolResult, types.Sessions, error) {
-	return answer[types.Sessions](err)
+	r, detail, err := answer(err)
+	return r, types.Sessions{Refusal: detail}, err
 }
 
 // ErrWait is err as terminal_wait's answer.
 func ErrWait(err error) (*sdk.CallToolResult, types.Reply, error) {
-	return answer[types.Reply](err)
+	r, detail, err := answer(err)
+	return r, types.Reply{Refusal: detail}, err
 }

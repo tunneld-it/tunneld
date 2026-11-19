@@ -362,7 +362,7 @@ func TestShellsMarkTheirCommands(t *testing.T) {
 				var out map[string]any
 				_ = json.Unmarshal(raw, &out)
 				if res.IsError {
-					out = map[string]any{"error": res.Content[0].(*sdk.TextContent).Text}
+					out = map[string]any{"error": res.Content[0].(*sdk.TextContent).Text, "refusal": out["refusal"]}
 				}
 				return out
 			}
@@ -392,8 +392,12 @@ func TestShellsMarkTheirCommands(t *testing.T) {
 			if slow["running"] != true || slow["exit_code"] != nil || slow["timed_out"] != true {
 				t.Fatalf("sleep 2 after 300ms = %v, want running, no exit_code, timed out", slow)
 			}
-			if refused := call("terminal_exec", map[string]any{"url": url, "command": "echo no"}); !strings.Contains(fmt.Sprint(refused["error"]), "is running a command") {
+			refused := call("terminal_exec", map[string]any{"url": url, "command": "echo no"})
+			if !strings.Contains(fmt.Sprint(refused["error"]), "is running a command") {
 				t.Errorf("a command line while sleep runs = %v, want it refused", refused)
+			}
+			if r, _ := refused["refusal"].(map[string]any); r["code"] != "shell_busy" || r["url"] != url || r["command_cursor"] != slow["command_cursor"] || fmt.Sprint(r["interrupt"]) != "[map[key:Ctrl-C]]" {
+				t.Errorf("the refusal's data = %v, want shell_busy, the url, the running command's cursor, Ctrl-C", refused["refusal"])
 			}
 			cursor := slow["command_cursor"]
 			waited := call("terminal_wait", map[string]any{"url": url, "cursor": cursor, "timeout_ms": 5000})

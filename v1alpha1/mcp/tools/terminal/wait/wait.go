@@ -37,7 +37,7 @@ func run() tool.RunFunc[In, types.Reply] {
 		until, err := in.Pattern()
 		if err != nil {
 			c.Logged(ctx, "terminal_wait", "refused", start)
-			return errors.ErrWait(refusals.NotAPattern(err))
+			return errors.ErrWait(refusals.NotAPattern(in.Until, err))
 		}
 		term, err := c.Terminal(ctx, "terminal_wait", in.URL, start)
 		if err != nil {

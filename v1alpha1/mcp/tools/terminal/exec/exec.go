@@ -50,7 +50,7 @@ func run() tool.RunFunc[In, types.Reply] {
 		until, err := in.Pattern()
 		if err != nil {
 			c.Logged(ctx, "terminal_exec", "refused", start)
-			return errors.ErrExec(refusals.NotAPattern(err))
+			return errors.ErrExec(refusals.NotAPattern(in.Until, err))
 		}
 		term, err := c.Terminal(ctx, "terminal_exec", in.URL, start)
 		if err != nil {
@@ -62,10 +62,10 @@ func run() tool.RunFunc[In, types.Reply] {
 			c.Logged(ctx, "terminal_exec", "refused", start)
 			return errors.ErrExec(refusals.Busy(in.URL, running.CommandCursor))
 		}
-		files, err := prepare(in.Attachments)
+		files, refused, err := prepare(in.Attachments)
 		if err != nil {
 			c.Logged(ctx, "terminal_exec", "refused", start)
-			return errors.ErrExec(refusals.BadAttachment(err))
+			return errors.ErrExec(refusals.BadAttachment(refused, err))
 		}
 		if err := write(files); err != nil {
 			c.Logged(ctx, "terminal_exec", "refused", start)
