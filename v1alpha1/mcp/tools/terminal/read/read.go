@@ -42,6 +42,9 @@ func run() tool.RunFunc[In, types.Read] {
 			return errors.ErrRead(refusals.Unreadable(err))
 		}
 		out := types.Read{Output: got}
+		if state, ok := term.Command(in.Cursor); ok {
+			out.Command = &state
+		}
 		out.Text, out.Truncated = tool.Capped(out.Text)
 		c.Logged(ctx, "terminal_read", "read", start)
 		return nil, out, nil

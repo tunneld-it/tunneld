@@ -452,8 +452,13 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 	// Informational whatever it finds: what failed is said on stderr, and the
 	// process still exits 0, so a setup script running it is never failed by
 	// the report.
+	// Silent, the report is one JSON object on stdout instead, and nothing
+	// on stderr.
 	if b.preflight {
 		out := cmd.OutOrStdout()
+		if b.silent {
+			return json.NewEncoder(out).Encode(preflight.New(b.provider, Version()).Run(ctx, nil))
+		}
 		if err := preflight.New(b.provider, Version()).Run(ctx, out).Close(out); err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", cmd.Name(), err)
 		}

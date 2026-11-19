@@ -156,8 +156,9 @@ func (a *TargetImpl) attachShim(ctx context.Context, in io.Reader, out, errw io.
 	}
 	defer func() { _ = pg.Close() }()
 
-	cmd := exec.CommandContext(ctx, a.path, a.args...)
-	cmd.Env = shimEnv(environ(), so, pagePath, dir)
+	args, env := a.marked(shimEnv(environ(), so, pagePath, dir))
+	cmd := exec.CommandContext(ctx, a.path, args...)
+	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = theirs, theirs, theirs
 	ownGroup(cmd)
 	err = cmd.Start()

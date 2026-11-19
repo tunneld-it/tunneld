@@ -112,12 +112,15 @@ func (b Attached) Terminal(index int) (attach.Terminal, bool) {
 // Terminal is a terminal that keeps what it was sent, shows Shows, and has
 // printed Prints; each Send prints Reply after it. Its cursors are "@" and
 // an offset into Prints; "stale" is one from another log. Err, when set, is
-// what Send answers, having kept nothing.
+// what Send answers, having kept nothing. Busy, when set, is the command
+// Running answers; Commands is what Command and Ended know, by cursor.
 type Terminal struct {
-	Shows  attach.Screen
-	Prints string
-	Reply  string
-	Err    error
+	Shows    attach.Screen
+	Prints   string
+	Reply    string
+	Err      error
+	Busy     *attach.Command
+	Commands map[string]attach.Command
 
 	mu     sync.Mutex
 	sent   []attach.Input
@@ -148,6 +151,38 @@ func (t *Terminal) Send(reader string, input ...attach.Input) (string, error) {
 	t.moved(reader, end)
 	t.Prints += t.Reply
 	return "@" + strconv.Itoa(end), nil
+}
+
+// Run is Send, answering the cursor where the line went in, which is the one
+// Send answers.
+func (t *Terminal) Run(reader string, input ...attach.Input) (string, string, error) {
+	from, err := t.Send(reader, input...)
+	return from, from, err
+}
+
+// Running is Busy.
+func (t *Terminal) Running() (attach.Command, bool) {
+	if t.Busy == nil {
+		return attach.Command{}, false
+	}
+	return *t.Busy, true
+}
+
+// Command is Commands[cursor].
+func (t *Terminal) Command(cursor string) (attach.Command, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	c, ok := t.Commands[cursor]
+	return c, ok
+}
+
+// Ended is closed when Commands knows cursor as ended, and never otherwise.
+func (t *Terminal) Ended(_ context.Context, cursor string) <-chan struct{} {
+	ended := make(chan struct{})
+	if c, ok := t.Command(cursor); ok && c.Ended() {
+		close(ended)
+	}
+	return ended
 }
 
 // Screen is Shows.

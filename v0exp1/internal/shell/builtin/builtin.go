@@ -83,11 +83,71 @@ func Origin() (v1.Origin, error) {
 // With u-root's commands — ls, cat, grep, wget and the rest (commands.go)
 // — at the end of $PATH for as long as the shell runs, so a machine with none
 // still has them and a machine with its own keeps using those.
+//
+// It marks its commands (OSC 133) as tunneld's other shells do: its rc is
+// the person's own rc.elv with marks hooks after it (rc).
 func Run() int {
 	if remove, err := installCommands(); err != nil {
 		fmt.Fprintf(os.Stderr, "tunneld: no built-in commands: %v\n", err)
 	} else {
 		defer remove()
 	}
-	return prog.Run([3]*os.File{os.Stdin, os.Stdout, os.Stderr}, []string{"elvish"}, &elvish.Program{})
+	args := []string{"elvish"}
+	if path, remove, err := rc(); err == nil {
+		defer remove()
+		args = append(args, "-rc", path)
+	}
+	return prog.Run([3]*os.File{os.Stdin, os.Stdout, os.Stderr}, args, &elvish.Program{})
+}
+
+// marks are the hooks that make Elvish mark its commands: C once a line is
+// read, D with its status once it has run, A before each prompt. A command
+// that exits with a status is that status, one killed by a signal 128 and its
+// number, and any other error 1.
+const marks = `
+set edit:after-readline = [$@edit:after-readline {|_| print "\e]133;C\a" }]
+set edit:after-command = [$@edit:after-command {|m|
+  var code = 0
+  if (not-eq $m[error] $nil) {
+    set code = 1
+    try { set code = $m[error][reason][exit-status] } catch {
+      try { set code = (+ 128 $m[error][reason][signal-number]) } catch { }
+    }
+  }
+  print "\e]133;D;"$code"\a"
+}]
+set edit:before-readline = [$@edit:before-readline { print "\e]133;A\a" }]
+`
+
+// rc is a file holding the person's own rc.elv, where Elvish looks for it,
+// then the marks, and what removes it: one file rather than an eval, so what
+// their rc defines stays in the shell's own namespace.
+func rc() (string, func(), error) {
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if config == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", nil, err
+		}
+		config = filepath.Join(home, ".config")
+	}
+	own, err := os.ReadFile(filepath.Join(config, "elvish", "rc.elv"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", nil, err
+	}
+	f, err := os.CreateTemp("", "tunneld-rc-*.elv")
+	if err != nil {
+		return "", nil, err
+	}
+	remove := func() { _ = os.Remove(f.Name()) }
+	if _, err := f.Write(append(own, marks...)); err != nil {
+		f.Close()
+		remove()
+		return "", nil, err
+	}
+	if err := f.Close(); err != nil {
+		remove()
+		return "", nil, err
+	}
+	return f.Name(), remove, nil
 }

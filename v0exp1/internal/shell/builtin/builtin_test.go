@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -159,5 +160,39 @@ func TestBuiltinOnATerminal(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the shell did not exit")
+	}
+}
+
+// TestRC pins the built-in shell's rc: the person's own rc.elv, where Elvish
+// looks for it, then the marks, in a file the remover takes away; the marks
+// alone when there is no rc of their own.
+func TestRC(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	path, remove, err := rc()
+	if err != nil {
+		t.Fatalf("rc() with no rc.elv = %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != marks {
+		t.Errorf("rc with no rc.elv = %q, want the marks alone", got)
+	}
+	remove()
+
+	if err := os.MkdirAll(filepath.Join(config, "elvish"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, "elvish", "rc.elv"), []byte("var mine = yes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, remove, err = rc()
+	if err != nil {
+		t.Fatalf("rc() = %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "var mine = yes\n"+marks {
+		t.Errorf("rc = %q, want theirs, then the marks", got)
+	}
+	remove()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the rc is still there after remove: %v", err)
 	}
 }

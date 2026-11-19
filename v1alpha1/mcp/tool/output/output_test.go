@@ -50,6 +50,9 @@ type waiting struct {
 	}
 }
 
+// Command knows no command.
+func (w *waiting) Command(string) (attach.Command, bool) { return attach.Command{}, false }
+
 func (w *waiting) Wait(ctx context.Context, reader, cursor string, until *regexp.Regexp, idle time.Duration) (attach.Output, bool, error) {
 	w.asked.reader, w.asked.cursor, w.asked.idle = reader, cursor, idle
 	if until != nil {
@@ -94,7 +97,7 @@ func TestWait(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Pattern() = %v", err)
 			}
-			reply, refusal := Wait(c, t.Context(), "a_tool", tc.term, "me", "@0", until, tc.w, time.Now())
+			reply, refusal := Wait(c, t.Context(), "a_tool", tc.term, "me", "@0", "", until, tc.w, time.Now())
 			if tc.failed != "" {
 				if refusal == nil || !strings.Contains(refusal.Error(), tc.failed) || !strings.Contains(got(), "ended=refused") {
 					t.Errorf("refusal = %v, log %q; want a logged refusal saying %q", refusal, got(), tc.failed)

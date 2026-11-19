@@ -11,6 +11,9 @@ import (
 // how the wait ended.
 type Reply struct {
 	attach.Output
+	// The command line typed, when there was one in a shell that marks its
+	// commands: where, whether it still runs, and how it exited.
+	*attach.Command
 	Matched   bool `json:"matched" jsonschema:"whether until matched"`
 	TimedOut  bool `json:"timed_out" jsonschema:"whether timeout_ms passed first; neither this nor matched means the program fell quiet"`
 	Truncated bool `json:"truncated" jsonschema:"whether text was cut to its last 64 KiB"`
@@ -22,6 +25,9 @@ type Screen = attach.Screen
 // Read is what terminal_read answers.
 type Read struct {
 	attach.Output
+	// The command line read from, when cursor is one terminal_exec answered
+	// in a shell that marks its commands.
+	*attach.Command
 	Truncated bool `json:"truncated" jsonschema:"whether text was cut to its last 64 KiB"`
 }
 

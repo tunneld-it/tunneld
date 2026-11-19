@@ -44,9 +44,14 @@ func (w For) Pattern() (*regexp.Regexp, error) {
 //
 // until is w's Pattern, compiled by the caller, which refuses one that does
 // not compile before it does anything else.
-func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal, reader, cursor string, until *regexp.Regexp, w For, start time.Time) (types.Reply, error) {
+//
+// command is a cursor Run answered, "" for none: when the terminal knows it,
+// the wait also ends once that command has, idles only when w says to, and
+// the reply says how the command went.
+func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal, reader, cursor, command string, until *regexp.Regexp, w For, start time.Time) (types.Reply, error) {
+	_, watching := term.Command(command)
 	idle := defaultIdle
-	if until != nil {
+	if until != nil || watching {
 		idle = 0
 	}
 	if w.IdleMs != nil {
@@ -58,12 +63,26 @@ func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal
 	}
 	waiting, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	got, matched, err := term.Wait(waiting, reader, cursor, until, idle)
+	stopped, stop := context.WithCancel(waiting)
+	defer stop()
+	if watching {
+		go func() {
+			select {
+			case <-term.Ended(stopped, command):
+				stop()
+			case <-stopped.Done():
+			}
+		}()
+	}
+	got, matched, err := term.Wait(stopped, reader, cursor, until, idle)
 	if err != nil {
 		c.Logged(ctx, name, "refused", start)
 		return types.Reply{}, refusals.Unreadable(err)
 	}
 	reply := types.Reply{Output: got, Matched: matched, TimedOut: !matched && errors.Is(waiting.Err(), context.DeadlineExceeded)}
+	if state, ok := term.Command(command); ok {
+		reply.Command = &state
+	}
 	reply.Text, reply.Truncated = tool.Capped(reply.Text)
 	return reply, nil
 }

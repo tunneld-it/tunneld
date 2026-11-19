@@ -97,6 +97,13 @@ type output struct {
 	// moved; one unused for readerIdle is forgotten.
 	readers map[string]position
 	now     func() time.Time
+
+	// marks is what the shell's integration said, and the lines Run typed,
+	// oldest first; prompted is whether it has marked a prompt since the
+	// program last started, and seq numbers the marks. See command.go.
+	marks    []mark
+	prompted bool
+	seq      int64
 }
 
 type position struct {
@@ -481,6 +488,7 @@ func (o *output) reset() {
 	o.em.ClearScrollback()
 	o.buf = o.buf[:0]
 	o.logged, o.held, o.line = nil, "", ""
+	o.prompted = false
 	o.notify()
 }
 
