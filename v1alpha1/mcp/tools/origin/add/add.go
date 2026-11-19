@@ -101,6 +101,11 @@ func run() tool.RunFunc[In, types.Origin] {
 			if c.Attached == nil {
 				return refuse(refusals.Fixed("origin_add"))
 			}
+			if origin.Scheme == v1.ExecScheme {
+				tool.Progress(ctx, "Starting the program")
+			} else {
+				tool.Progress(ctx, "Attaching the container")
+			}
 			var err error
 			if added, err = c.Attached.Add(origin); err != nil {
 				return refuse(refusals.Unserved(origin, err))

@@ -354,6 +354,21 @@ sign-in shares it, so an agent that may share a terminal with another
 passes back the `cursor` each answer gives, which reads from where it says
 whatever the position.
 
+**Progress.** A call whose client passes `_meta.progressToken` is sent
+`notifications/progress` while it runs, and a call without one gets none.
+The notifications are:
+- What the tool is doing, once it has held for a second: "Waiting for the
+  command to end", "Waiting for the output to match until", "Waiting for the
+  program to fall quiet", "Starting the program", "Attaching the container".
+  A call done within that second is sent nothing.
+- After five seconds with nothing sent, the same again with how long the
+  call has run ("Waiting for the command to end, 6s").
+
+`progress` counts up from 1, there is no `total`, and `_meta` names the tool
+as `tunneld.it/tool`. A message is always one of tunneld's own, never a
+program's output or a call's arguments. Every notification goes out before
+the answer, and one that fails to send is dropped, never the call.
+
 **Refusals, as data.** A tool error tunneld refuses a call with is texts
 for the model to read, what went wrong and then what to do, and, in
 `structuredContent`, the tool's output with `refusal` set and the rest empty.

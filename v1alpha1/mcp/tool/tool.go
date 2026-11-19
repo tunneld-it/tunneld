@@ -42,11 +42,14 @@ type Tool struct {
 type RunFunc[In, Out any] func(Context, context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error)
 
 // New is the tool def, run by run with the run's Context. In and Out are
-// what the SDK infers the input and output schemas from.
+// what the SDK infers the input and output schemas from. A call whose client
+// asked for progress is told it, what run says through Progress.
 func New[In, Out any](def sdk.Tool, run RunFunc[In, Out]) Tool {
 	return Tool{Tool: def, add: func(s *sdk.Server, c Context) {
 		listed := def
 		sdk.AddTool(s, &listed, func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+			p, ctx := startProgress(ctx, req, def.Name)
+			defer p.close()
 			return run(c, ctx, req, in)
 		})
 	}}
