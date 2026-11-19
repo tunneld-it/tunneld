@@ -61,6 +61,14 @@ func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal
 	if w.TimeoutMs > 0 {
 		timeout = min(time.Duration(w.TimeoutMs)*time.Millisecond, maxTimeout)
 	}
+	switch {
+	case watching:
+		tool.Progress(ctx, "Waiting for the command to end")
+	case until != nil:
+		tool.Progress(ctx, "Waiting for the output to match until")
+	default:
+		tool.Progress(ctx, "Waiting for the program to fall quiet")
+	}
 	waiting, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stopped, stop := context.WithCancel(waiting)
