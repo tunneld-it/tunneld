@@ -39,7 +39,7 @@ func run() tool.RunFunc[In, types.Read] {
 		got, err := term.Read(c.Caller(ctx), in.Cursor)
 		if err != nil {
 			c.Logged(ctx, "terminal_read", "refused", start)
-			return errors.ErrRead(refusals.Unreadable(err))
+			return errors.ErrRead(refusals.Unreadable(in.Cursor, err))
 		}
 		out := types.Read{Output: got}
 		if state, ok := term.Command(in.Cursor); ok {

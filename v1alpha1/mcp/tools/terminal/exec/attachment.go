@@ -34,8 +34,9 @@ type file struct {
 }
 
 // prepare checks and decodes every attachment, so a bad one is refused
-// before any is written.
-func prepare(as []Attachment) ([]file, error) {
+// before any is written, with its path: none when what is wrong is their
+// size, 1 MiB in all.
+func prepare(as []Attachment) ([]file, string, error) {
 	files := make([]file, 0, len(as))
 	total := 0
 	for i, a := range as {
@@ -43,32 +44,32 @@ func prepare(as []Attachment) ([]file, error) {
 			return fmt.Errorf("%w: attachment %d: %s", ErrBadAttachment, i+1, fmt.Sprintf(format, args...))
 		}
 		if !filepath.IsAbs(a.Path) {
-			return nil, bad("%q is not an absolute path", a.Path)
+			return nil, a.Path, bad("%q is not an absolute path", a.Path)
 		}
 		if info, err := os.Stat(a.Path); err == nil && info.IsDir() {
-			return nil, bad("%s is a directory", a.Path)
+			return nil, a.Path, bad("%s is a directory", a.Path)
 		}
 		mode := fs.FileMode(0o600)
 		if a.Mode != "" {
 			m, err := strconv.ParseUint(a.Mode, 8, 32)
 			if err != nil || m > 0o777 {
-				return nil, bad("mode %q is not octal permissions, 0000 to 0777", a.Mode)
+				return nil, a.Path, bad("mode %q is not octal permissions, 0000 to 0777", a.Mode)
 			}
 			mode = fs.FileMode(m)
 		}
 		if total+len(a.Data) > 2*maxAttachments {
-			return nil, fmt.Errorf("%w: more than 1 MiB in all", ErrBadAttachment)
+			return nil, "", fmt.Errorf("%w: more than 1 MiB in all", ErrBadAttachment)
 		}
 		data, err := decode(a.Data)
 		if err != nil {
-			return nil, bad("%s", strings.TrimPrefix(err.Error(), ErrBadAttachment.Error()+": "))
+			return nil, a.Path, bad("%s", strings.TrimPrefix(err.Error(), ErrBadAttachment.Error()+": "))
 		}
 		if total += len(data); total > maxAttachments {
-			return nil, fmt.Errorf("%w: more than 1 MiB in all", ErrBadAttachment)
+			return nil, "", fmt.Errorf("%w: more than 1 MiB in all", ErrBadAttachment)
 		}
 		files = append(files, file{a.Path, data, mode})
 	}
-	return files, nil
+	return files, "", nil
 }
 
 // decode is a data: URI's content (RFC 2397): base64, padded or not, or

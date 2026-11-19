@@ -888,8 +888,27 @@ func (c *CacheImpl) renderFor(served bool) string {
 	// Everything the run settled on, after the one line that does something.
 	// Sorted, so the same run twice writes the same file and a diff between
 	// two of them is about the runs rather than about map iteration.
-	names := make([]string, 0, len(c.tracking))
-	for name, value := range c.tracking {
+	tracking := maps.Clone(c.tracking)
+	// The origins as the run serves them now, in index order: those it was
+	// started with, then those origin_add added, which the key leaves out.
+	// -l lists both from here, and an added one never feeds a next run.
+	if c.origins != nil {
+		var started, added []string
+		for _, origin := range c.origins.All() {
+			if origin.Added {
+				added = append(added, origin.URL().String())
+			} else {
+				started = append(started, origin.URL().String())
+			}
+		}
+		if tracking == nil {
+			tracking = map[string]string{}
+		}
+		tracking[v1.OriginsEnv] = strings.Join(started, ",")
+		tracking["TUNNELD_ADDED_ORIGINS"] = strings.Join(added, ",")
+	}
+	names := make([]string, 0, len(tracking))
+	for name, value := range tracking {
 		// A knob nobody set says nothing about the run, and a file of empty
 		// variables is one nobody reads twice.
 		if value != "" {
@@ -901,7 +920,7 @@ func (c *CacheImpl) renderFor(served bool) string {
 		if _, mut := c.mutable[name]; mut {
 			continue
 		}
-		lines = append(lines, assign(name, c.tracking[name]))
+		lines = append(lines, assign(name, tracking[name]))
 	}
 	// What a PATCH or the operator set, after the run's knobs: an empty one
 	// as a bare line, since present-and-empty is a choice (public) that a

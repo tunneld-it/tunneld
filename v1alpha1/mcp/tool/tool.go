@@ -74,7 +74,7 @@ func (c Context) Terminal(ctx context.Context, tool, url string, start time.Time
 	origin, err := c.Origins.From(url)
 	if err != nil {
 		c.Logged(ctx, tool, "refused", start)
-		return nil, refusals.Unlisted(err)
+		return nil, refusals.Unlisted(url, err)
 	}
 	term, ok := c.Attached.Terminal(origin.Index)
 	if !ok {

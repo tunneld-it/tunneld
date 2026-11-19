@@ -779,7 +779,7 @@ func (b *BuilderImpl) Run(ctx context.Context) error {
 		run.WithOrigins(settled),
 		run.WithAttached(attached),
 		run.WithCache(spec),
-		run.WithTracking(b.tracking(origins)),
+		run.WithTracking(b.tracking()),
 		run.WithDisplay(b.display),
 		run.WithMultiview(b.multiview),
 		run.WithConsole(b.console),
@@ -939,9 +939,10 @@ func (b *BuilderImpl) logger() (*slog.Logger, error) {
 // knob, for the cache to write beside the spec.
 //
 // Settled rather than read back out of the environment, because most of these
-// never arrive that way: `tunneld :3000 --log-level debug` sets neither
-// TUNNELD_ORIGINS nor TUNNELD_LOG, and a file recording only what the
-// environment happened to hold would be empty for the common run.
+// never arrive that way: `tunneld :3000 --log-level debug` sets no
+// TUNNELD_LOG, and a file recording only what the environment happened to
+// hold would be empty for the common run. The origins line is the cache's,
+// from the run's origins as they are at each save.
 //
 // It is written and never read — Load takes the spec and nothing else. A cache
 // that fed these back into the next run would pin a choice made once into
@@ -955,14 +956,8 @@ func (b *BuilderImpl) logger() (*slog.Logger, error) {
 //
 // No credential belongs in this map. The mint token is the account's where a
 // spec is one tunnel's, and nothing that names one is a knob a run settled.
-func (b *BuilderImpl) tracking(origins Origins) map[string]string {
-	shown := make([]string, 0, origins.Len())
-	for _, origin := range origins.All() {
-		shown = append(shown, origin.URL().String())
-	}
-
+func (b *BuilderImpl) tracking() map[string]string {
 	out := map[string]string{
-		v1.OriginsEnv:           strings.Join(shown, ","),
 		v1.ProviderEnv:          b.provider,
 		v1.LogEnv:               b.logLevel,
 		v1.MultiviewEnv:         strconv.FormatBool(b.multiview),

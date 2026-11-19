@@ -77,7 +77,7 @@ func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal
 	got, matched, err := term.Wait(stopped, reader, cursor, until, idle)
 	if err != nil {
 		c.Logged(ctx, name, "refused", start)
-		return types.Reply{}, refusals.Unreadable(err)
+		return types.Reply{}, refusals.Unreadable(cursor, err)
 	}
 	reply := types.Reply{Output: got, Matched: matched, TimedOut: !matched && errors.Is(waiting.Err(), context.DeadlineExceeded)}
 	if state, ok := term.Command(command); ok {

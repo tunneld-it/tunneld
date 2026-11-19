@@ -32,23 +32,36 @@ func (s Style) bold(text string) string { return s.paint("1", text) }
 func (s Style) dim(text string) string  { return s.paint("2", text) }
 func (s Style) cyan(text string) string { return s.paint("36", text) }
 
+// served is every origin run serves, in index order: those it was started
+// with, then those origin_add added; started is how many it was started
+// with, which are all the multiview panel frames.
+func served(run Run) (origins []string, started int) {
+	origins = split(run.Env["TUNNELD_ORIGINS"])
+	started = len(origins)
+	return append(origins, split(run.Env["TUNNELD_ADDED_ORIGINS"])...), started
+}
+
 // Addresses is what run is printed on stdout, one per line, the way a run
-// prints them: the panel's address alone when there is a panel, otherwise one
-// per origin, routed by ?n when there is more than one. None with no cached
-// settings.
+// prints them: the panel's address when there is a panel, then each origin
+// it does not frame, otherwise one per origin, routed by ?n when there is
+// more than one. None with no cached settings.
 func Addresses(run Run) []string {
 	host := run.Env["LIBTUNNEL_HOSTNAME"]
 	if host == "" {
 		return nil
 	}
 	base := "https://" + host + "/"
-	origins := split(run.Env["TUNNELD_ORIGINS"])
-	if len(origins) <= 1 || run.Env["TUNNELD_MULTIVIEW"] == "true" {
+	origins, started := served(run)
+	if len(origins) <= 1 {
 		return []string{base}
 	}
-	out := make([]string, len(origins))
-	for i := range origins {
-		out[i] = base + "?" + strconv.Itoa(i)
+	var out []string
+	first := 0
+	if run.Env["TUNNELD_MULTIVIEW"] == "true" && started > 1 {
+		out, first = []string{base}, started
+	}
+	for i := first; i < len(origins); i++ {
+		out = append(out, base+"?"+strconv.Itoa(i))
 	}
 	return out
 }
@@ -77,7 +90,7 @@ func Summary(w io.Writer, run Run, already bool, s Style) {
 		lines = append(lines, "  Your application is now available at the address above.", "")
 	} else {
 		base := "https://" + host + "/"
-		origins := split(run.Env["TUNNELD_ORIGINS"])
+		origins, started := served(run)
 		columns := s.Columns
 		if columns <= 0 || columns > 78 {
 			columns = 78
@@ -93,7 +106,7 @@ func Summary(w io.Writer, run Run, already bool, s Style) {
 			lines = append(lines, "  "+s.cyan(base)+"  "+arrow+" "+label(first))
 		} else {
 			width := len(base + "?" + strconv.Itoa(len(origins)-1))
-			if run.Env["TUNNELD_MULTIVIEW"] == "true" {
+			if run.Env["TUNNELD_MULTIVIEW"] == "true" && started > 1 {
 				lines = append(lines, "  "+s.cyan(pad(base, width))+"  "+arrow+" multiview")
 			}
 			for i, o := range origins {
@@ -121,7 +134,8 @@ func List(w io.Writer, runs []Run) {
 				fields = append(fields, home(pwd))
 			}
 			var labels []string
-			for _, o := range split(r.Env["TUNNELD_ORIGINS"]) {
+			origins, _ := served(r)
+			for _, o := range origins {
 				labels = append(labels, label(o))
 			}
 			if len(labels) > 0 {
@@ -149,13 +163,15 @@ type listed struct {
 
 // ListJSON prints every run on w as one JSON array, [] for none: each run's
 // pid and key, then its address, the address of each origin, its directory
-// and origins from its cached settings, and the paths of its settings and log,
+// and origins from its cached settings, origin_add's included, and the paths
+// of its settings and log,
 // those it has: cwd as the run recorded it, its own working directory, and
 // the paths of its files made absolute.
 func ListJSON(w io.Writer, runs []Run) error {
 	out := make([]listed, 0, len(runs))
 	for _, r := range runs {
-		l := listed{Pid: r.Pid, Key: r.Key, Cwd: r.Env["PWD"], Origins: split(r.Env["TUNNELD_ORIGINS"]), Env: absolute(r.EnvPath), Log: absolute(r.LogPath)}
+		origins, _ := served(r)
+		l := listed{Pid: r.Pid, Key: r.Key, Cwd: r.Env["PWD"], Origins: origins, Env: absolute(r.EnvPath), Log: absolute(r.LogPath)}
 		if host := r.Env["LIBTUNNEL_HOSTNAME"]; host != "" {
 			l.Address = "https://" + host + "/"
 			l.Addresses = Addresses(r)

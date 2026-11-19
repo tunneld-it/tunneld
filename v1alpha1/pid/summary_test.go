@@ -129,16 +129,20 @@ func TestSummaryNarrow(t *testing.T) {
 }
 
 // TestAddresses pins what a run is printed as on stdout: the bare address for
-// one origin or a panel, ?n for each of several, nothing without settings.
+// one origin or a panel, ?n for each of several, nothing without settings;
+// with origin_add's, ?n for each origin once there are several, after the
+// panel for those it does not frame.
 func TestAddresses(t *testing.T) {
 	for name, tc := range map[string]struct {
 		env  map[string]string
 		want []string
 	}{
-		"one":       {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "http://localhost:3000"}, []string{"https://t.example/"}},
-		"several":   {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "a,b"}, []string{"https://t.example/?0", "https://t.example/?1"}},
-		"the panel": {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "a,b", "TUNNELD_MULTIVIEW": "true"}, []string{"https://t.example/"}},
-		"nothing":   {nil, nil},
+		"one":              {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "http://localhost:3000"}, []string{"https://t.example/"}},
+		"several":          {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "a,b"}, []string{"https://t.example/?0", "https://t.example/?1"}},
+		"the panel":        {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "a,b", "TUNNELD_MULTIVIEW": "true"}, []string{"https://t.example/"}},
+		"nothing":          {nil, nil},
+		"one, added":       {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "exec:///bin/sh", "TUNNELD_ADDED_ORIGINS": "b,c", "TUNNELD_MULTIVIEW": "true"}, []string{"https://t.example/?0", "https://t.example/?1", "https://t.example/?2"}},
+		"the panel, added": {map[string]string{"LIBTUNNEL_HOSTNAME": "t.example", "TUNNELD_ORIGINS": "a,b", "TUNNELD_ADDED_ORIGINS": "c", "TUNNELD_MULTIVIEW": "true"}, []string{"https://t.example/", "https://t.example/?2"}},
 	} {
 		if got := Addresses(Run{Env: tc.env}); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: Addresses = %q, want %q", name, got, tc.want)
@@ -165,14 +169,15 @@ func TestList(t *testing.T) {
 }
 
 // TestListJSON pins -l -s: one JSON array, [] for none, each run its pid and
-// key and what its settings and log give, never its spec.
+// key and what its settings and log give, origin_add's origins after its
+// own, never its spec.
 func TestListJSON(t *testing.T) {
 	dir := t.TempDir()
 	env, log := filepath.Join(dir, "k.env"), filepath.Join(dir, "k.log")
 	runs := []Run{
 		{Pid: 7, Key: "k", EnvPath: env, LogPath: log, Env: map[string]string{
 			"LIBTUNNEL_SPEC": `{"secret":"s3cret"}`, "LIBTUNNEL_HOSTNAME": "t.example", "PWD": "/work",
-			"TUNNELD_ORIGINS": "http://localhost:3000,exec:///bin/bash?arg=-l",
+			"TUNNELD_ORIGINS": "http://localhost:3000,exec:///bin/bash?arg=-l", "TUNNELD_ADDED_ORIGINS": "http://localhost:8000",
 		}},
 		{Pid: 12345, Key: "__no_cache__4000"},
 	}
@@ -181,7 +186,7 @@ func TestListJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	quoted := func(s string) string { q, _ := json.Marshal(s); return string(q) }
-	want := `[{"pid":7,"key":"k","address":"https://t.example/","addresses":["https://t.example/?0","https://t.example/?1"],"cwd":"/work","origins":["http://localhost:3000","exec:///bin/bash?arg=-l"],"env":` + quoted(env) + `,"log":` + quoted(log) + `},{"pid":12345,"key":"__no_cache__4000"}]` + "\n"
+	want := `[{"pid":7,"key":"k","address":"https://t.example/","addresses":["https://t.example/?0","https://t.example/?1","https://t.example/?2"],"cwd":"/work","origins":["http://localhost:3000","exec:///bin/bash?arg=-l","http://localhost:8000"],"env":` + quoted(env) + `,"log":` + quoted(log) + `},{"pid":12345,"key":"__no_cache__4000"}]` + "\n"
 	if b.String() != want {
 		t.Errorf("ListJSON =\n%s\nwant\n%s", b.String(), want)
 	}

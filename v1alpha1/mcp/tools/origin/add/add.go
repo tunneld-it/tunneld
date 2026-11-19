@@ -106,6 +106,10 @@ func run() tool.RunFunc[In, types.Origin] {
 				return refuse(refusals.Unserved(origin, err))
 			}
 		}
+		// The run's file lists what it serves, for -l.
+		if c.Cache != nil {
+			c.Cache.Save()
+		}
 		machine := c.Machine()
 		// Every served origin is told its address again: with one origin
 		// more, the first may have gone from the bare address to ?0.
