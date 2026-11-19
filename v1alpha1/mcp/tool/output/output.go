@@ -47,7 +47,8 @@ func (w For) Pattern() (*regexp.Regexp, error) {
 //
 // command is a cursor Run answered, "" for none: when the terminal knows it,
 // the wait also ends once that command has, idles only when w says to, and
-// the reply says how the command went.
+// the reply says how the command went. The wait ends as well once the
+// program has exited, and the reply says how the program stands.
 func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal, reader, cursor, command string, until *regexp.Regexp, w For, start time.Time) (types.Reply, error) {
 	_, watching := term.Command(command)
 	idle := defaultIdle
@@ -73,15 +74,21 @@ func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal
 	defer cancel()
 	stopped, stop := context.WithCancel(waiting)
 	defer stop()
+	// The wait also ends when the command, or the program itself, has:
+	// either channel is nil, and never ready, when there is nothing to end.
+	var ended <-chan struct{}
 	if watching {
-		go func() {
-			select {
-			case <-term.Ended(stopped, command):
-				stop()
-			case <-stopped.Done():
-			}
-		}()
+		ended = term.Ended(stopped, command)
 	}
+	go func() {
+		select {
+		case <-ended:
+			stop()
+		case <-term.Exited():
+			stop()
+		case <-stopped.Done():
+		}
+	}()
 	got, matched, err := term.Wait(stopped, reader, cursor, until, idle)
 	if err != nil {
 		c.Logged(ctx, name, "refused", start)
@@ -90,6 +97,9 @@ func Wait(c tool.Context, ctx context.Context, name string, term attach.Terminal
 	reply := types.Reply{Output: got, Matched: matched, TimedOut: !matched && errors.Is(waiting.Err(), context.DeadlineExceeded)}
 	if state, ok := term.Command(command); ok {
 		reply.Command = &state
+	}
+	if program, ok := term.Program(); ok {
+		reply.Program = &program
 	}
 	reply.Text, reply.Truncated = tool.Capped(reply.Text)
 	return reply, nil

@@ -47,6 +47,19 @@ type Terminal interface {
 	// Ended closes once the command line Run typed at cursor has ended, or
 	// never, for one Command does not know; it stops watching when ctx ends.
 	Ended(ctx context.Context, cursor string) <-chan struct{}
+	// Program is how the program the terminal runs stands: whether its
+	// current run has exited, and how. False for a container, which has no
+	// exit status of its own to give.
+	Program() (Program, bool)
+	// Exited closes once the program's current run has exited, its output
+	// all read; never for a container, or a program not started yet.
+	Exited() <-chan struct{}
+}
+
+// Program is how a terminal's program stands.
+type Program struct {
+	Exited   bool `json:"exited" jsonschema:"whether the program has exited; input sent to it starts it again"`
+	ExitCode *int `json:"exit_code,omitempty" jsonschema:"how the program exited, once it has: 0 for success, 128 plus the signal for one a signal ended"`
 }
 
 // Input is one step of what Send sends: text as typed, or one key by name.
@@ -175,6 +188,29 @@ func (s *session) Ended(ctx context.Context, cursor string) <-chan struct{} {
 		}
 	}()
 	return ended
+}
+
+// Program implements Terminal.
+func (s *session) Program() (Program, bool) {
+	code, program, over := s.status()
+	switch {
+	case !program:
+		return Program{}, false
+	case !over:
+		return Program{}, true
+	}
+	return Program{Exited: true, ExitCode: &code}, true
+}
+
+// Exited implements Terminal: the current run's done, which closes after
+// the run's output is all in the log.
+func (s *session) Exited() <-chan struct{} {
+	if _, ok := s.Target.(Exiter); !ok {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done
 }
 
 // send is Send, and with run, Run: typed is where the input went in.

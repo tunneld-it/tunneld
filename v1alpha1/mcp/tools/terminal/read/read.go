@@ -45,6 +45,9 @@ func run() tool.RunFunc[In, types.Read] {
 		if state, ok := term.Command(in.Cursor); ok {
 			out.Command = &state
 		}
+		if program, ok := term.Program(); ok {
+			out.Program = &program
+		}
 		out.Text, out.Truncated = tool.Capped(out.Text)
 		c.Logged(ctx, "terminal_read", "read", start)
 		return nil, out, nil

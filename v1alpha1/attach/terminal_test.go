@@ -532,3 +532,36 @@ func TestTerminalRestartKeepsThePersonsSize(t *testing.T) {
 	target.awaitRun(t, 3)
 	target.awaitSize(t, settled)
 }
+
+// TestTerminalProgram pins how a terminal's program stands: running, then,
+// once it has exited, exited with its status, Exited closing as it does; a
+// container's terminal has no program to say anything of.
+func TestTerminalProgram(t *testing.T) {
+	end := make(chan struct{})
+	term := Terminal(serveFake(t, &exitTarget{stubTarget: &stubTarget{name: "/bin/fails"}, code: 3, end: end}).session)
+	if p, ok := term.Program(); !ok || p.Exited || p.ExitCode != nil {
+		t.Fatalf("Program() while it runs = %+v, %v; want a program, not exited", p, ok)
+	}
+	select {
+	case <-term.Exited():
+		t.Fatal("Exited closed while the program runs")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(end)
+	select {
+	case <-term.Exited():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Exited never closed after the program exited")
+	}
+	if p, ok := term.Program(); !ok || !p.Exited || p.ExitCode == nil || *p.ExitCode != 3 {
+		t.Errorf("Program() once it has exited = %+v, %v; want exited 3", p, ok)
+	}
+
+	container := Terminal(serveFake(t, newFakeTarget("db", true, true)).session)
+	if p, ok := container.Program(); ok {
+		t.Errorf("a container's Program() = %+v, true; want none", p)
+	}
+	if container.Exited() != nil {
+		t.Error("a container's Exited is a channel, want nil")
+	}
+}

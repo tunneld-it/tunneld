@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1093,14 +1094,16 @@ func TestSessionEnds(t *testing.T) {
 type stubTarget struct {
 	name   string
 	origin string
-	closed bool
+	// closed is atomic: a server's Close runs from its context and from a
+	// test's cleanup, both.
+	closed atomic.Bool
 }
 
 func (s *stubTarget) Name() string   { return s.name }
 func (s *stubTarget) Origin() string { return s.origin }
 func (s *stubTarget) TTY() bool      { return true }
 func (s *stubTarget) Stdin() bool    { return true }
-func (s *stubTarget) Close() error   { s.closed = true; return nil }
+func (s *stubTarget) Close() error   { s.closed.Store(true); return nil }
 func (s *stubTarget) AttachContainer(ctx context.Context, _, _, _ string, _ io.Reader, _, _ io.WriteCloser, _ bool, _ <-chan remotecommand.TerminalSize) error {
 	<-ctx.Done()
 	return nil
@@ -1888,7 +1891,7 @@ func TestAttachUnwindsOnFailure(t *testing.T) {
 	if len(targets.opened) != 1 {
 		t.Fatalf("opened %d targets, want 1", len(targets.opened))
 	}
-	if !targets.opened[0].closed {
+	if !targets.opened[0].closed.Load() {
 		t.Error("the first container's target was left open")
 	}
 	if got := display.Dialable()[0].String(); got != "attach://dockerd/api" {
